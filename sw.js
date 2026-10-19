@@ -1,6 +1,6 @@
 // Сохраняет приложение на телефоне, чтобы оно открывалось без интернета.
 // При изменении файлов приложения увеличьте номер версии.
-const VERSION = 'otara-v12';
+const VERSION = 'otara-v13';
 const FB = 'https://www.gstatic.com/firebasejs/10.14.1/';
 const SHELL = [
   './', './index.html', './app.js', './config.js', './manifest.webmanifest',
@@ -9,7 +9,9 @@ const SHELL = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // Сохраняем файлы по одному: если какой-то не скачался, остальные всё равно останутся для работы без интернета
+  e.waitUntil(caches.open(VERSION).then(c => Promise.allSettled(SHELL.map(u => c.add(new Request(u, {cache:'reload'})))))
+    .then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k))))
