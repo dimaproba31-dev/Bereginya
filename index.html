@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#F4F6F2">
-<title>Отара</title>
+<link rel="preload" as="image" href="icons/logo.png">
+<title>Берегиня</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -343,11 +344,21 @@ details.more summary{cursor:pointer;font-weight:600;color:var(--accent)}
 .pen.empty{box-shadow:none;border:1px dashed var(--line)}
 .pen.q{box-shadow:inset 0 0 0 1.5px var(--warn)}
 @media (max-width:360px){.qbtn{font-size:14px;padding:12px}.stile .sv{font-size:26px}}
+body.worker .adm{display:none!important}
+.logday{margin-top:8px}
+.logrow{display:grid;grid-template-columns:44px minmax(0,1fr);gap:10px;background:var(--surface);border-radius:14px;box-shadow:var(--shadow);padding:12px 14px}
+.logtime{font-weight:700;font-size:14px;color:var(--muted);padding-top:2px}
+.logmain{min-width:0;display:flex;flex-direction:column;gap:4px;font-size:15px;overflow-wrap:anywhere}
+.logmain ul{margin:0;padding-left:18px;font-size:14px;color:var(--fg)}
+.brand{display:flex;align-items:center;gap:8px}
+.brandlogo{height:52px;width:auto;display:block;margin:-6px 0}
+.loginbrand{display:flex;align-items:center;gap:14px}
+.loginbrand img{height:110px;width:auto}
 </style>
 </head>
 <body>
 <header class="top"><div class="wrap">
-  <div class="brand">Отара <small>учёт МРС</small></div>
+  <div class="brand"><img src="icons/logo.png" alt="" class="brandlogo" width="32" height="52">Берегиня</div>
   <div class="sync" id="sync"><span class="dot"></span><span>подключение…</span></div>
 </div></header>
 

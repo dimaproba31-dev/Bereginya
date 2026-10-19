@@ -1,6 +1,6 @@
 {
-  "name": "Отара — учёт овец и коз",
-  "short_name": "Отара",
+  "name": "Берегиня — учёт овец и коз",
+  "short_name": "Берегиня",
   "lang": "ru",
   "start_url": "./",
   "scope": "./",
@@ -9,7 +9,7 @@
   "background_color": "#EDF1EA",
   "theme_color": "#2D6748",
   "icons": [
-    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
-    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}
   ]
 }

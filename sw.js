@@ -1,10 +1,10 @@
 // Сохраняет приложение на телефоне, чтобы оно открывалось без интернета.
 // При изменении файлов приложения увеличьте номер версии.
-const VERSION = 'otara-v8';
+const VERSION = 'otara-v12';
 const FB = 'https://www.gstatic.com/firebasejs/10.14.1/';
 const SHELL = [
   './', './index.html', './app.js', './config.js', './manifest.webmanifest',
-  './icons/icon-192.png', './icons/icon-512.png',
+  './icons/icon-192.png', './icons/icon-512.png', './icons/logo.png',
   FB + 'firebase-app.js', FB + 'firebase-firestore.js', FB + 'firebase-auth.js'
 ];
 
