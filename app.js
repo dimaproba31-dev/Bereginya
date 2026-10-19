@@ -79,14 +79,16 @@ const ageMonths = birth => birth ? daysBetween(birth, today())/30.44 : null;
 /* ===== Производственные группы ===== */
 const YOUNG_DAYS = 122; // молодняк до 4 месяцев, потом автоматический перевод
 const GROUPS = {
-  sheep:[['milk','Дойные'],['preg','Стельные'],['repl','Ремонтный молодняк'],['ram','Бараны-производители'],['meat','Бараны на мясо'],['deco','Декоративные'],['young','Молодняк до 4 мес']],
-  goat:[['milk','Дойные'],['preg','Стельные'],['repl','Ремонтный молодняк'],['yarki','Ярки'],['meat','Козлы на мясо'],['buck','Козлы-производители'],['young','Молодняк до 4 мес']]
+  sheep:[['milk','Дойные'],['preg','Стельные'],['repl','Ремонтный молодняк'],['ram','Бараны-производители'],['meat','Бараны на мясо'],['deco','Декоративные'],['young','Молодняк до 4 мес'],['quar','Карантин']],
+  goat:[['milk','Дойные'],['preg','Стельные'],['repl','Ремонтный молодняк'],['yarki','Ярки'],['meat','Козлы на мясо'],['buck','Козлы-производители'],['young','Молодняк до 4 мес'],['quar','Карантин']]
 };
 const groupName = (sp, g) => (GROUPS[sp] || GROUPS.sheep).find(x => x[0]===g)?.[1] || 'Без группы';
 const ageDays = birth => birth ? daysBetween(birth, today()) : null;
 const grownGroup = a => a.sex==='m' ? 'meat' : 'repl';
 // Группа животного: заданная явно, иначе — по категории из файла и возрасту
 function groupOf(a){
+  // все, кто стоит в загонах карантина, — в группе «Карантин»; после перевода из карантина возвращаются в свою группу
+  if(PEN[a.pen]?.barn.quarantine) return 'quar';
   const d = ageDays(a.birth);
   if(a.group==='none') return '';
   if(a.group){ if(a.group==='young' && d!=null && d >= YOUNG_DAYS) return grownGroup(a); return a.group; }
@@ -609,7 +611,7 @@ function herdView(){
       return n ? `<button class="gbtn" data-f="${f}"><span>${l}</span><b>${n}</b></button>` : ''; }).join('')}</div></div>`;
   const search = `<div class="search"><input id="q" type="search" placeholder="Найти по номеру бирки или кличке" value="${esc(S.q)}" autocomplete="off"></div>`;
   if(!listMode){
-    const extra = ['nogroup','quarantine','nopen','gone'].map(k => { const n = all.filter(FILTERS[k][1]).length; return n ? `<button class="gbtn soft" data-f="${k}"><span>${FILTERS[k][0]}</span><b>${n}</b></button>` : ''; }).join('');
+    const extra = ['nogroup','nopen','gone'].map(k => { const n = all.filter(FILTERS[k][1]).length; return n ? `<button class="gbtn soft" data-f="${k}"><span>${FILTERS[k][0]}</span><b>${n}</b></button>` : ''; }).join('');
     return search + `<div class="hero"><div><div class="hero-l">Всего поголовье</div><div class="bignum">${act.length}</div></div><div class="hero-r"><span><i style="background:var(--sheep)"></i>Овцы <b>${nSheep}</b></span><span><i style="background:var(--goat)"></i>Козы <b>${nGoat}</b></span></div></div>
       ${block('sheep')}${block('goat')}
       ${extra ? `<div class="gblock"><div class="gtitle"><span>Требуют внимания</span></div><div class="ggrid">${extra}</div></div>` : ''}
