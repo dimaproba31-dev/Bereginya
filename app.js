@@ -4,14 +4,19 @@
 const BARNS = [
   {id:'o1', name:'Овчарня 1', short:'О1', pens:19},
   {id:'o2', name:'Овчарня 2', short:'О2', pens:19},
-  {id:'k',  name:'Козлятник', short:'К',  pens:10},
+  {id:'k',  name:'Козлятник', short:'К',  pens:10, extra:['1а']},
   {id:'q',  name:'Карантин',  short:'Кар', pens:10, quarantine:true},
 ];
-const PENS = BARNS.flatMap(b => Array.from({length:b.pens}, (_, i) => ({id:`${b.id}-${i+1}`, barn:b, n:i+1})));
+// extra — дополнительные загоны с буквой (например «1а»), встают сразу после загона с тем же номером
+const PENS = BARNS.flatMap(b => Array.from({length:b.pens}, (_, i) => [
+  {id:`${b.id}-${i+1}`, barn:b, n:String(i+1)},
+  ...(b.extra||[]).filter(x => parseInt(x)===i+1).map(x => ({id:`${b.id}-${x.replace('а','a')}`, barn:b, n:x}))
+]).flat());
 const PEN = Object.fromEntries(PENS.map(p => [p.id, p]));
 const PEN_ORDER = Object.fromEntries(PENS.map((p, i) => [p.id, i]));
 const penShort = id => PEN[id] ? `${PEN[id].barn.short}·${PEN[id].n}` : '';
 const penLong = id => PEN[id] ? `${PEN[id].barn.name}, загон ${PEN[id].n}` : 'Без загона';
+const penLabel = id => (S.pens.find(p => p.id===id)?.label || '').trim();
 
 /* ===== Справочники ===== */
 const SPECIES = {sheep:'Овца', goat:'Коза'};
@@ -30,6 +35,7 @@ const CAT = {
   income:['Продажа животных','Молоко','Мясо','Шерсть','Прочее']
 };
 const SESS = {am:'Утро', pm:'Вечер'};
+const CATEGORIES = ['Дойная','Суягная','Сукозная','Холостая','Подсосная','Ярка','Молодняк','Ягнёнок','Козлёнок','Баран-производитель','Козёл-производитель','Баран-кастрат','Козёл-кастрат','Больная','Декоративная'];
 const MILKOUT = {cheese:'На сыроварню', sale:'Продажа', feed:'Выпойка молодняку', waste:'Брак / списание'};
 const UNITS = ['кг','т','ц','тюк','л','шт'];
 const STOCK = {feed:'Корма', fuel:'ГСМ'};
@@ -70,7 +76,8 @@ function age(birth){
   return `${y} ${plural(y,'год','года','лет')}${r?` ${r} мес`:''}`;
 }
 const ageMonths = birth => birth ? daysBetween(birth, today())/30.44 : null;
-const adult = a => (ageMonths(a.birth) ?? 99) >= 8;
+const YOUNG_RE = /молодняк|ягн[её]н|козл[её]н|малыш|ярочк|козочк|баранчик|козлик/i;
+const adult = a => { const m = ageMonths(a.birth); return m != null ? m >= 8 : !YOUNG_RE.test(a.cat||''); };
 const tagSort = (x,y) => String(x.tag).localeCompare(String(y.tag),'ru',{numeric:true});
 const penSort = (x,y) => ((PEN_ORDER[x.pen] ?? 999) - (PEN_ORDER[y.pen] ?? 999)) || tagSort(x,y);
 const byId = id => S.animals.find(a => a.id === id);
@@ -106,8 +113,10 @@ function localBackend(key){
   try{ mem = JSON.parse(localStorage.getItem(key) || '{}') || {}; }catch(_){ mem = {}; }
   const subs = {};
   const list = col => Object.entries(mem[col]||{}).map(([id,v]) => ({id, ...v}));
-  const save = () => { try{ localStorage.setItem(key, JSON.stringify(mem)); }catch(_){ toast('Память браузера заполнена — сохраните резервную копию.'); } };
-  const emit = col => (subs[col]||[]).forEach(f => f(list(col), false));
+  let saveT = 0; const dirty = new Set();
+  const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try{ localStorage.setItem(key, JSON.stringify(mem)); }catch(_){ toast('Память браузера заполнена — сохраните резервную копию.'); } }, 60); };
+  const emitNow = col => (subs[col]||[]).forEach(f => f(list(col), false));
+  const emit = col => { if(dirty.has(col)) return; dirty.add(col); setTimeout(() => { dirty.delete(col); emitNow(col); }, 0); };
   const isObj = v => v && typeof v==='object' && !Array.isArray(v);
   const clean = v => isObj(v) ? Object.fromEntries(Object.entries(v).filter(([,x]) => x!==DEL && x!==undefined).map(([k,x]) => [k, clean(x)])) : v;
   const merge = (a, b) => { const o = {...(isObj(a)?a:{})}; for(const [k,v] of Object.entries(b)){ if(v===DEL) delete o[k]; else if(isObj(v)) o[k] = merge(o[k], v); else if(v!==undefined) o[k] = v; } return o; };
@@ -116,8 +125,8 @@ function localBackend(key){
     clear(){ Object.keys(mem).forEach(k => delete mem[k]); save(); COLS.forEach(emit); },
     subscribe(col, next){ (subs[col] ||= []).push(next); setTimeout(() => next(list(col), false), 0); return () => { subs[col] = subs[col].filter(f => f!==next); }; },
     newId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); },
-    write(col, id, data, m){ mem[col] ||= {}; mem[col][id] = m ? merge(mem[col][id], data) : clean(data); save(); setTimeout(() => emit(col), 0); return Promise.resolve(); },
-    remove(col, id){ if(mem[col]) delete mem[col][id]; save(); setTimeout(() => emit(col), 0); return Promise.resolve(); }
+    write(col, id, data, m){ mem[col] ||= {}; mem[col][id] = m ? merge(mem[col][id], data) : clean(data); save(); emit(col); return Promise.resolve(); },
+    remove(col, id){ if(mem[col]) delete mem[col][id]; save(); emit(col); return Promise.resolve(); }
   };
 }
 // Запись сразу попадает в память телефона; на сервер уходит, когда есть сеть.
@@ -390,19 +399,19 @@ const FILTERS = {
 function herdView(){
   const all = S.animals, q = S.q.trim().toLowerCase();
   const list = all.filter(FILTERS[S.filter][1])
-    .filter(a => !q || [a.tag, a.name, a.breed, penShort(a.pen), penLong(a.pen)].some(x => String(x||'').toLowerCase().includes(q)))
+    .filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLong(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q)))
     .sort(tagSort);
   let h = `<div class="search"><input id="q" type="search" placeholder="Бирка, кличка, порода, загон" value="${esc(S.q)}" autocomplete="off"></div>
   <div class="chips" role="group" aria-label="Фильтр">${Object.entries(FILTERS).map(([k,[l,fn]]) => { const n = all.filter(fn).length; return (n || k==='active' || S.filter===k) ? `<button class="chip" data-f="${k}" aria-pressed="${S.filter===k}">${l}<b>${n}</b></button>` : ''; }).join('')}</div>`;
   if(loading()) return h + `<div class="empty"><p>Загружаем стадо…</p></div>`;
-  if(!all.length) return h + `<div class="empty"><h2>Стадо пока пустое</h2><p>Добавьте первое животное: номер бирки, вид, пол, загон и дату рождения. Мать, отца и вес можно заполнить позже.</p><button class="btn primary" data-act="add-animal">Добавить животное</button></div>`;
+  if(!all.length) return h + `<div class="empty"><h2>Стадо пока пустое</h2><p>Добавьте первое животное: номер бирки, вид, пол, загон и дату рождения. Мать, отца и вес можно заполнить позже.</p><div class="actions"><button class="btn primary" data-act="add-animal">Добавить животное</button><button class="btn" data-act="import">Загрузить из Excel</button></div></div>`;
   if(!list.length) return h + `<div class="empty"><p>Под этот фильтр никто не подходит.</p></div>`;
   return h + `<div class="list">` + list.map(a => {
     const w = lastWeight(a.id);
     return `<button class="row ${a.status!=='active'?'gone':''}" data-open="${a.id}">
       <span class="tag">${esc(a.tag)}</span>
       <span class="main"><div class="name">${esc(animalTitle(a))} ${sexIcon(a.sex)}</div>
-      <div class="sub">${[penShort(a.pen) ? `загон ${penShort(a.pen)}` : '', a.breed, age(a.birth)].filter(Boolean).map(esc).join(' · ') || SPECIES[a.species]}</div></span>
+      <div class="sub">${[penShort(a.pen) ? `загон ${penShort(a.pen)}` : '', a.cat, a.breed, age(a.birth)].filter(Boolean).map(esc).join(' · ') || SPECIES[a.species]}</div></span>
       <span class="side">${w?`<strong>${num(w)} кг</strong>`:''}${a.status!=='active'?`<span class="pill">${STATUS[a.status]}</span>`:''}</span></button>`;
   }).join('') + `</div>`;
 }
@@ -426,7 +435,7 @@ function pensView(){
       <div class="pens">${pens.map(p => {
         const n = inPen(p.id).length, r = penRation(p.id);
         return `<button class="pen ${n?'':'empty'} ${b.quarantine?'q':''}" data-pen="${p.id}" aria-label="${esc(penLong(p.id))}: ${heads(n)}">
-          <b>${p.n}</b><span>${n ? `${n} гол.` : 'пусто'}</span>${r ? `<i>${esc(r.name)}</i>` : ''}</button>`;
+          <b>${p.n}</b><span>${n ? `${n} гол.` : 'пусто'}</span>${penLabel(p.id) ? `<em>${esc(penLabel(p.id))}</em>` : ''}${r ? `<i>${esc(r.name.replace(/^рацион\s*/i, ''))}</i>` : ''}</button>`;
       }).join('')}</div></section>`;
   }
   h += `<div class="barn-head"><h2>Рационы</h2><button class="btn small" data-act="add-ration">Новый рацион</button></div>`;
@@ -533,6 +542,7 @@ function moreView(){
     ${row('plan','План', soon ? `${soon} ${plural(soon,'дело','дела','дел')} на ближайшую неделю` : 'Обработки, окоты, заканчивающиеся корма')}
     ${row('money','Финансы','Доходы и расходы по месяцам')}
     ${row('stats','Сводка','Поголовье, приплод, молоко, деньги за год')}
+    <button class="row" data-act="import" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Загрузка из Excel</div><div class="sub">Список животных по загонам из вашей таблицы</div></span><span class="side">›</span></button>
     <button class="row" data-act="excel" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Выгрузка в Excel</div><div class="sub">Стадо, окоты, корма, ГСМ, молоко, финансы за период</div></span><span class="side">›</span></button></div>`;
   h += `<div class="panel"><div class="eyebrow">Резервная копия</div><p class="muted">Файл со всеми записями. Сохраняйте его раз в месяц.</p><div class="actions"><button class="btn" data-act="backup">Сохранить копию</button></div></div>`;
   if(S.local && !S.demo) h += `<div class="banner">Записи хранятся только на этом устройстве. Чтобы вести учёт вместе, настройте синхронизацию по инструкции README.</div>`;
@@ -647,7 +657,7 @@ function bindView(){
   on('[data-act]', b => ({
     'add-animal':() => animalForm(), 'add-fin':() => financeForm(), 'add-ration':() => rationForm(),
     'add-item':() => itemForm({cat:S.stockCat}), 'seed-items':seedItems, 'milkout':() => milkOutForm(),
-    'feed-log':feedLogSheet, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
+    'feed-log':feedLogSheet, import:importSheet, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
     logout:() => fb && fb.au.signOut(fb.auth)
   })[b.dataset.act]?.());
 }
@@ -703,7 +713,7 @@ function refreshSheet(){
 const opt = (val, label, cur) => `<option value="${esc(val)}" ${String(cur ?? '')===String(val)?'selected':''}>${esc(label)}</option>`;
 const fld = (id, label, inner) => `<div class="field"><label for="${id}">${label}</label>${inner}</div>`;
 const penOptions = (cur, emptyLabel='— без загона —') => opt('', emptyLabel, cur||'') + BARNS.map(b =>
-  `<optgroup label="${esc(b.name)}">${PENS.filter(p => p.barn===b).map(p => opt(p.id, `${b.name} · загон ${p.n} — ${inPen(p.id).length} гол.`, cur)).join('')}</optgroup>`).join('');
+  `<optgroup label="${esc(b.name)}">${PENS.filter(p => p.barn===b).map(p => opt(p.id, `${b.name} · загон ${p.n}${penLabel(p.id) ? ' · ' + penLabel(p.id) : ''} — ${inPen(p.id).length} гол.`, cur)).join('')}</optgroup>`).join('');
 const confirmBox = (text, yesLabel='Удалить') => `<div class="confirm"><div>${text}</div><div class="actions"><button class="btn" type="button" data-c="no">Отмена</button><button class="btn danger" type="button" data-c="yes">${yesLabel}</button></div></div>`;
 function askConfirm(holder, text, onYes, yesLabel){
   holder.innerHTML = confirmBox(text, yesLabel);
@@ -732,7 +742,8 @@ function animalCard(id){
       <div class="muted">${a.status==='active' ? `<span class="pill ok">В стаде</span>` : `<span class="pill">${STATUS[a.status]}${a.outDate?' · '+fmtD(a.outDate):''}</span>`}</div></div></div>
     <div class="actions"><button class="btn primary" id="addEv">Событие</button><button class="btn" id="edit">Изменить</button></div>
     <dl class="facts">
-      <div><dt>Загон</dt><dd>${a.pen && PEN[a.pen] ? `<button class="link" data-pen-go="${a.pen}">${esc(penLong(a.pen))}</button>` : '—'}</dd></div>
+      <div><dt>Загон</dt><dd>${a.pen && PEN[a.pen] ? `<button class="link" data-pen-go="${a.pen}">${esc(penLong(a.pen))}</button>${a.since ? `<span class="muted" style="display:block">с ${fmtD(a.since)}</span>` : ''}` : '—'}</dd></div>
+      <div><dt>Категория</dt><dd>${esc(a.cat || '—')}</dd></div>
       <div><dt>Вид, порода</dt><dd>${SPECIES[a.species]}${a.breed?', '+esc(a.breed):''}</dd></div>
       <div><dt>Дата рождения</dt><dd>${fmtD(a.birth)}</dd></div>
       <div><dt>Возраст</dt><dd>${age(a.birth)||'—'}</dd></div>
@@ -740,6 +751,7 @@ function animalCard(id){
       <div><dt>Отец</dt><dd>${link(dad, a.fatherText)}</dd></div>
       <div><dt>Последний вес</dt><dd>${w?`${num(w.weight)} кг · ${fmtShort(w.date)}`:'—'}</dd></div>
       ${a.sex==='f' ? `<div><dt>Надой, 7 дней</dt><dd>${mk ? `${num(mk.avg,2)} л/сут` : '—'}</dd></div>` : `<div><dt>Потомков</dt><dd>${kids.length}</dd></div>`}
+      <div><dt>Рацион по файлу</dt><dd>${esc(a.rationNo || '—')}</dd></div>
     </dl>
     ${a.note?`<p class="muted" style="margin:0">${esc(a.note)}</p>`:''}
     ${a.sex==='f' && adult(a) ? `<div class="panel"><div class="kv"><span class="eyebrow">Последний окот</span>${lb?`<span class="muted">всего окотов: ${lb.total}</span>`:''}</div>
@@ -791,7 +803,9 @@ function animalForm(a, pre){
       ${fld('a-name','Кличка',`<input id="a-name" name="name" value="${esc(v.name)}">`)}</div>
     <div class="field"><label>Вид</label><div class="seg">${Object.entries(SPECIES).map(([k,l]) => `<label><input type="radio" name="species" value="${k}" ${v.species===k?'checked':''}>${l}</label>`).join('')}</div></div>
     <div class="field"><label>Пол</label><div class="seg"><label><input type="radio" name="sex" value="f" ${v.sex==='f'?'checked':''}>Самка ♀</label><label><input type="radio" name="sex" value="m" ${v.sex==='m'?'checked':''}>Самец ♂</label></div></div>
-    ${fld('a-pen','Загон',`<select id="a-pen" name="pen">${penOptions(v.pen)}</select>`)}
+    <div class="two">${fld('a-pen','Загон',`<select id="a-pen" name="pen">${penOptions(v.pen)}</select>`)}
+      ${fld('a-cat','Категория',`<input id="a-cat" name="cat" list="cats" value="${esc(v.cat)}" placeholder="напр. Дойная" autocomplete="off">`)}</div>
+    <datalist id="cats">${[...new Set([...CATEGORIES, ...S.animals.map(x => x.cat).filter(Boolean)])].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <div class="two">${fld('a-birth','Дата рождения',`<input id="a-birth" type="date" name="birth" value="${esc(v.birth)}" max="${today()}">`)}
       ${fld('a-breed','Порода',`<input id="a-breed" name="breed" list="breeds" value="${esc(v.breed)}">`)}</div>
     <datalist id="breeds">${[...new Set(['Романовская','Эдильбаевская','Лакон','Ассаф','Восточно-фризская','Катумская','Дорпер','Зааненская','Альпийская','Нубийская','Ламанча','Русская белая',...S.animals.map(x=>x.breed).filter(Boolean)])].map(b=>`<option value="${esc(b)}">`).join('')}</datalist>
@@ -940,7 +954,8 @@ function penSheet(pid){
   const list = isPen ? inPen(pid).sort(tagSort) : S.animals.filter(a => a.status==='active' && !PEN[a.pen]).sort(tagSort);
   const r = isPen ? penRation(pid) : null, pu = isPen ? feedUse().perPen[pid] : null;
   const body = `
-    ${isPen ? `${fld('p-ration','Рацион загона',`<select id="p-ration">${opt('','— без рациона —', r?.id||'')}${S.rations.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')).map(x => opt(x.id, x.name, r?.id)).join('')}</select>`)}
+    ${isPen ? `${fld('p-label','Назначение загона',`<input id="p-label" value="${esc(penLabel(pid))}" placeholder="напр. Дойные 2-разовые" autocomplete="off">`)}
+      ${fld('p-ration','Рацион загона',`<select id="p-ration">${opt('','— без рациона —', r?.id||'')}${S.rations.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')).map(x => opt(x.id, x.name, r?.id)).join('')}</select>`)}
       ${r ? `<div class="panel"><div class="eyebrow">Расход в сутки · ${heads(list.length)}</div>${pu ? Object.entries(pu.use).map(([id,q]) => `<div class="kv"><span>${esc(itemById(id)?.name||'удалён')}</span><strong>${num(q)} ${esc(itemById(id)?.unit||'')}</strong></div>`).join('') : '<p class="muted" style="margin:0">Загон пуст — корм не списывается.</p>'}</div>` : ''}
       ${!S.rations.length ? `<p class="muted" style="margin:0">Рационов пока нет. <button class="link" id="newRation">Создать рацион</button></p>` : ''}` : ''}
     <div class="kv"><span class="eyebrow">Животные · ${list.length}</span>${list.length ? `<button class="link" id="pall">Отметить всех</button>` : ''}</div>
@@ -950,8 +965,10 @@ function penSheet(pid){
     ${isPen ? `<div class="actions"><button class="btn" id="padd">Добавить животное в этот загон</button></div>` : ''}`;
   openSheet(isPen ? penLong(pid) : 'Без загона', body, s => {
     const rs = s.querySelector('#p-ration');
-    if(rs) rs.onchange = () => { store.set('pens', pid, {ration: rs.value || null}); if(rs.value) ensureFeedStart(); toast(rs.value ? 'Рацион назначен' : 'Рацион снят'); setTimeout(() => penSheet(pid), 150); };
+    if(rs) rs.onchange = () => { store.merge('pens', pid, {ration: rs.value || null}); if(rs.value) ensureFeedStart(); toast(rs.value ? 'Рацион назначен' : 'Рацион снят'); setTimeout(() => penSheet(pid), 150); };
     const nr = s.querySelector('#newRation'); if(nr) nr.onclick = () => rationForm(null, [pid]);
+    const pl = s.querySelector('#p-label');
+    if(pl) pl.onchange = () => { const v = pl.value.trim(); if(v !== penLabel(pid)){ store.merge('pens', pid, {label:v}); toast('Назначение загона сохранено'); } };
     const pm = () => [...s.querySelectorAll('input[name=pm]:checked')].map(c => c.value);
     const to = s.querySelector('#p-to'), mv = s.querySelector('#pmove');
     const upd = () => { if(mv){ const n = pm().length; mv.disabled = !n || !to.value; mv.textContent = n ? `Переместить (${n})` : 'Переместить'; } };
@@ -1021,15 +1038,15 @@ function rationForm(r, prePens){
       const want = new Set([...f.querySelectorAll('input[name=rp]:checked')].map(c => c.value));
       PENS.forEach(p => {
         const cur = S.pens.find(x => x.id===p.id)?.ration;
-        if(want.has(p.id) && cur!==id) store.set('pens', p.id, {ration:id});
-        else if(!want.has(p.id) && cur===id) store.set('pens', p.id, {ration:null});
+        if(want.has(p.id) && cur!==id) store.merge('pens', p.id, {ration:id});
+        else if(!want.has(p.id) && cur===id) store.merge('pens', p.id, {ration:null});
       });
       if(want.size) ensureFeedStart();
       toast(r ? 'Рацион сохранён' : 'Рацион создан'); closeSheet();
     };
     const del = s.querySelector('#rdel');
     if(del) del.onclick = () => askConfirm(s.querySelector('#rdelc'), 'Удалить рацион? Загоны останутся без рациона, корм для них перестанет списываться. Прошлые списания сохранятся.',
-      () => { S.pens.filter(p => p.ration===r.id).forEach(p => store.set('pens', p.id, {ration:null})); store.del('rations', r.id); toast('Рацион удалён'); closeSheet(); });
+      () => { S.pens.filter(p => p.ration===r.id).forEach(p => store.merge('pens', p.id, {ration:null})); store.del('rations', r.id); toast('Рацион удалён'); closeSheet(); });
   }, 'rform');
 }
 
@@ -1485,13 +1502,13 @@ function xlSheets(from, to, secs){
   if(secs.herd){
     const list = S.animals.slice().sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || penSort(a, b));
     out.push({name:'Стадо', title:'Стадо', note:`На ${fmtD(today())}. Голов в стаде: ${S.animals.filter(a => a.status === 'active').length}`,
-      cols:[{h:'Бирка',w:10},{h:'Кличка',w:12},{h:'Вид',w:7},{h:'Пол',w:6},{h:'Порода',w:14},{h:'Помещение',w:12},{h:'Загон',w:7,t:'i'},
+      cols:[{h:'Бирка',w:10},{h:'Кличка',w:12},{h:'Вид',w:7},{h:'Пол',w:6},{h:'Порода',w:14},{h:'Помещение',w:12},{h:'Загон',w:7},{h:'Категория',w:14},{h:'В загоне с',w:12,t:'d'},
         {h:'Дата рождения',w:12,t:'d'},{h:'Возраст',w:12},{h:'Мать',w:10},{h:'Отец',w:10},{h:'Статус',w:11},{h:'Дата выбытия',w:12,t:'d'},
         {h:'Последний вес, кг',w:10,t:'n'},{h:'Дата взвешивания',w:12,t:'d'},{h:'Последний окот',w:12,t:'d'},{h:'Детёнышей',w:9,t:'i'},{h:'Номера и пол детёнышей',w:24},
         {h:'Надой за 7 дн., л/сут',w:10,t:'n'},{h:'Заметка',w:24}],
       rows:list.map(a => {
         const w = eventsFor(a.id).find(e => e.type === 'weight' && e.weight), lb = a.sex === 'f' ? lastBirth(a.id) : null, mk = a.sex === 'f' ? animalMilk(a.id) : null;
-        return [String(a.tag), a.name || '', SPECIES[a.species], a.sex === 'f' ? 'Самка' : 'Самец', a.breed || '', barnOf(a), PEN[a.pen]?.n ?? '',
+        return [String(a.tag), a.name || '', SPECIES[a.species], a.sex === 'f' ? 'Самка' : 'Самец', a.breed || '', barnOf(a), PEN[a.pen]?.n ?? '', a.cat || '', a.since || '',
           a.birth || '', age(a.birth), tagOf(a.motherId) || a.motherText || '', tagOf(a.fatherId) || a.fatherText || '', STATUS[a.status] || '', a.outDate || '',
           w ? +w.weight : '', w ? w.date : '', lb ? lb.ev.date : '', lb ? (+lb.ev.count || lb.kids.length) : '',
           lb ? lb.kids.map(k => `${k.tag} ${k.sex === 'f' ? '♀' : '♂'}`).join(', ') : '', mk ? round(mk.avg, 2) : '', a.note || ''];
@@ -1525,13 +1542,13 @@ function xlSheets(from, to, secs){
     const {perPen} = feedUse();
     const rows = PENS.map(p => {
       const an = inPen(p.id), r = penRation(p.id), u = perPen[p.id]?.use || {};
-      return [p.barn.name, p.n, an.length, an.filter(a => a.species === 'sheep').length, an.filter(a => a.species === 'goat').length,
+      return [p.barn.name, p.n, penLabel(p.id), an.length, an.filter(a => a.species === 'sheep').length, an.filter(a => a.species === 'goat').length,
         an.filter(a => a.sex === 'f' && adult(a)).length, an.filter(a => !adult(a)).length, r?.name || '', r ? rationText(r) : '',
         Object.entries(u).map(([id, q]) => `${itemById(id)?.name || '?'} ${num(q)} ${itemById(id)?.unit || ''}`).join('; '), an.sort(tagSort).map(a => a.tag).join(', ')];
     });
     out.push({name:'Загоны', title:'Загоны и рационы', note:`На ${fmtD(today())}`,
-      cols:[{h:'Помещение',w:12},{h:'Загон',w:7,t:'i'},{h:'Голов',w:7,t:'i'},{h:'Овец',w:7,t:'i'},{h:'Коз',w:7,t:'i'},{h:'Маток',w:7,t:'i'},{h:'Молодняк',w:9,t:'i'},{h:'Рацион',w:16},{h:'Норма',w:34},{h:'Расход в сутки',w:30},{h:'Бирки',w:40}],
-      rows, total:[null, '', sum(rows, 2), sum(rows, 3), sum(rows, 4), sum(rows, 5), sum(rows, 6)]});
+      cols:[{h:'Помещение',w:12},{h:'Загон',w:7},{h:'Назначение',w:22},{h:'Голов',w:7,t:'i'},{h:'Овец',w:7,t:'i'},{h:'Коз',w:7,t:'i'},{h:'Маток',w:7,t:'i'},{h:'Молодняк',w:9,t:'i'},{h:'Рацион',w:16},{h:'Норма',w:34},{h:'Расход в сутки',w:30},{h:'Бирки',w:40}],
+      rows, total:[null, '', '', sum(rows, 3), sum(rows, 4), sum(rows, 5), sum(rows, 6), sum(rows, 7)]});
   }
   for(const cat of ['feed', 'fuel']){
     if(!secs[cat]) continue;
@@ -1662,5 +1679,306 @@ function excelSheet(only){
   }, 'xlform');
 }
 
+
+/* ===== Загрузка стада из Excel ===== */
+// Чтение .xlsx прямо в браузере: zip + XML, без внешних библиотек.
+async function readXlsx(buf){
+  const u8 = new Uint8Array(buf), dv = new DataView(buf), dec = new TextDecoder();
+  let eocd = -1;
+  for(let i = u8.length - 22; i >= Math.max(0, u8.length - 70000); i--) if(dv.getUint32(i, true) === 0x06054b50){ eocd = i; break; }
+  if(eocd < 0) throw new Error('not_xlsx');
+  const files = {}; let p = dv.getUint32(eocd + 16, true); const n = dv.getUint16(eocd + 10, true);
+  for(let k = 0; k < n; k++){
+    if(dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+    const nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lho = dv.getUint32(p + 42, true);
+    const name = dec.decode(u8.subarray(p + 46, p + 46 + nl));
+    const start = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true);
+    files[name] = {method, data:u8.subarray(start, start + csize)};
+    p += 46 + nl + xl + cl;
+  }
+  const text = async name => {
+    const f = files[name] || files[name.replace(/^\//, '')]; if(!f) return null;
+    if(f.method === 0) return dec.decode(f.data);
+    const ds = new Blob([f.data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return dec.decode(await new Response(ds).arrayBuffer());
+  };
+  const xml = s => new DOMParser().parseFromString(s, 'application/xml');
+  const wb = await text('xl/workbook.xml'); if(!wb) throw new Error('not_xlsx');
+  const rels = xml(await text('xl/_rels/workbook.xml.rels') || '<r/>');
+  const relMap = {}; [...rels.getElementsByTagName('Relationship')].forEach(r => relMap[r.getAttribute('Id')] = r.getAttribute('Target'));
+  const ssDoc = await text('xl/sharedStrings.xml');
+  const shared = ssDoc ? [...xml(ssDoc).getElementsByTagName('si')].map(si => [...si.getElementsByTagName('t')].map(t => t.textContent).join('')) : [];
+  const colIdx = ref => { let c = 0; for(const ch of ref.replace(/\d+/g, '')) c = c * 26 + ch.charCodeAt(0) - 64; return c - 1; };
+  const sheets = [];
+  for(const sh of xml(wb).getElementsByTagName('sheet')){
+    const rid = sh.getAttribute('r:id') || [...sh.attributes].find(a => a.name.endsWith(':id'))?.value;
+    let target = relMap[rid] || ''; target = target.startsWith('/') ? target.slice(1) : 'xl/' + target.replace(/^\.\//, '');
+    const src = await text(target); if(!src) continue;
+    const rows = [];
+    for(const r of xml(src).getElementsByTagName('row')){
+      const ri = (+r.getAttribute('r') || rows.length + 1) - 1, row = [];
+      for(const c of r.getElementsByTagName('c')){
+        const t = c.getAttribute('t'), v = c.getElementsByTagName('v')[0]?.textContent;
+        let val = null;
+        if(t === 's') val = shared[+v] ?? null;
+        else if(t === 'inlineStr') val = [...c.getElementsByTagName('t')].map(x => x.textContent).join('');
+        else if(t === 'str' || t === 'e') val = v ?? null;
+        else if(t === 'b') val = v === '1';
+        else if(v != null && v !== '') val = +v;
+        if(val !== null && val !== '') row[colIdx(c.getAttribute('r') || 'A1')] = val;
+      }
+      rows[ri] = row;
+    }
+    sheets.push({name:sh.getAttribute('name'), rows:Array.from(rows, r => r || [])});
+  }
+  return sheets;
+}
+
+const norm = s => String(s ?? '').toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
+function xlDate(v){
+  if(v == null || v === '') return '';
+  if(typeof v === 'number' && v > 20000 && v < 80000){ const d = new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 864e5); return d.toISOString().slice(0, 10); }
+  const m = String(v).match(/(\d{1,2})[.\/](\d{1,2})[.\/](\d{2,4})/); if(m){ const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${pad(m[2])}-${pad(m[1])}`; }
+  const m2 = String(v).match(/(\d{4})-(\d\d)-(\d\d)/); return m2 ? m2[0] : '';
+}
+const HEAD = {
+  tag:/бирк|инв\.?\s*№|^номер$|^№ ?животн/, cat:/категор|группа/, sex:/^пол$|^пол\b/, species:/^вид/, birth:/рожд/, since:/постанов|в загоне с/,
+  note:/примеч|коммент|замет/, ration:/рацион/, name:/кличк/, breed:/пород/, mother:/мать|матер/, father:/отец|отца/, weight:/вес/,
+  pen:/^загон/, barn:/помещ|корпус|ферма/
+};
+const barnByText = t => { const x = norm(t).replace(/\s/g, ''); return BARNS.find(b => norm(b.name).replace(/\s/g, '') === x || x.startsWith(norm(b.name).replace(/\s/g, ''))); };
+function parsePenText(t){
+  const m = norm(t).match(/загон\w*\s*№?\s*(\d+)\s*([а-яa-z])?(?![а-яa-z])(?:\s*[-–—]\s*(\d+))?[\s,.:;]*(.*)$/);
+  if(!m) return null;
+  return {n:+m[1], letter:m[2] || '', to:m[3] ? +m[3] : null, label:String(t).replace(/^[^№\d]*№?\s*\d+\s*[а-яa-z]?(?![а-яa-z])(\s*[-–—]\s*\d+)?[\s,.:;]*/i, '').trim()};
+}
+function penIdFor(barn, n, letter){
+  if(!barn) return null;
+  const want = String(n) + (letter ? letter.replace('a', 'а') : '');
+  return PENS.find(p => p.barn === barn && norm(p.n) === norm(want))?.id || null;
+}
+function sexSpecies(sexText, catText){
+  const s = norm(sexText), c = norm(catText); let sex = null, sp = null;
+  if(/^(овца|ярка|ярочка|овцематка)/.test(s)){ sex = 'f'; sp = 'sheep'; }
+  else if(/^(баран|баранчик)/.test(s)){ sex = 'm'; sp = 'sheep'; }
+  else if(/^(коза|козочка|козоматка)/.test(s)){ sex = 'f'; sp = 'goat'; }
+  else if(/^(козел|козлик)/.test(s)){ sex = 'm'; sp = 'goat'; }
+  else if(/^(ж|самка|f)/.test(s)) sex = 'f';
+  else if(/^(м|самец|m)/.test(s)) sex = 'm';
+  if(!sex){ if(/баран|козел|производ|кастрат|баранчик|козлик/.test(c)) sex = 'm'; else if(/дойн|суягн|сукозн|холост|подсос|ярк|матк|козочк|ярочк/.test(c)) sex = 'f'; }
+  if(!sp){ if(/суягн|ярк|ягнен|баран/.test(c)) sp = 'sheep'; else if(/сукозн|козлен|козел|коз/.test(c)) sp = 'goat'; }
+  return {sex, sp};
+}
+function splitTag(raw){
+  let t = String(raw ?? '').trim(); if(typeof raw === 'number') t = String(Math.round(raw));
+  if(!t) return {tag:'', name:''};
+  if(/^б\/?н$|^без ном/i.test(t)) return {tag:'', name:'', noTag:true};
+  let m = t.match(/^(\d[\d\-\/]*)\s+([А-Яа-яЁёA-Za-z]{3,}.*)$/); if(m) return {tag:m[1], name:m[2].trim()};
+  m = t.match(/^([А-Яа-яЁёA-Za-z]{3,}[А-Яа-яЁёA-Za-z ]*)\s+(\d[\d\-\/]*)$/); if(m) return {tag:m[2], name:m[1].trim()};
+  return {tag:t, name:''};
+}
+
+// Разбор книги в план загрузки (ничего не записывает)
+function buildImportPlan(sheets){
+  const animals = [], issues = [], pens = {}, rationsFound = {}, births = [];
+  const issue = (level, where, text) => issues.push({level, where, text});
+  for(const sh of sheets){
+    let barn = barnByText(sh.name), pen = null, penInfo = null, cols = null, headerRow = -1;
+    // таблицы рационов: «Рацион №N», ниже строки «корм | % | г», в конце «… г на сутки»
+    sh.rows.forEach((row, ri) => row.forEach((v, ci) => {
+      const m = typeof v === 'string' && v.match(/^\s*рацион\s*№\s*(\d+)\s*$/i); if(!m) return;
+      const head = sh.rows[ri + 1] || []; let gCol = -1;
+      for(let k = ci; k <= ci + 4; k++) if(norm(head[k]) === 'г' || norm(head[k]) === 'гр') { gCol = k; break; }
+      const items = []; let total = null;
+      for(let rr = ri + 2; rr < ri + 20; rr++){
+        const name = (sh.rows[rr] || [])[ci]; if(name == null || name === '') break;
+        const tm = String(name).match(/(\d+[.,]?\d*)\s*(г|кг)\s*(в|на)\s*сут/i);
+        if(tm){ total = parseFloat(tm[1].replace(',', '.')) * (tm[2].toLowerCase() === 'кг' ? 1000 : 1); break; }
+        const g = gCol >= 0 ? +((sh.rows[rr] || [])[gCol]) : NaN;
+        if(g > 0) items.push({name:String(name).trim(), g});
+      }
+      if(items.length && !rationsFound[m[1]]) rationsFound[m[1]] = {no:m[1], items, total, where:sh.name};
+    }));
+    for(let ri = 0; ri < sh.rows.length; ri++){
+      const row = sh.rows[ri], where = `${sh.name}, строка ${ri + 1}`;
+      const texts = row.map(v => v == null ? '' : String(v).trim());
+      const filled = texts.filter(Boolean);
+      if(!cols){
+        const tagCol = texts.findIndex(t => HEAD.tag.test(norm(t)));
+        if(tagCol >= 0){
+          cols = {}; headerRow = ri;
+          texts.forEach((t, ci) => { const x = norm(t); if(!x) return; for(const [k, re] of Object.entries(HEAD)) if(cols[k] == null && re.test(x)){ cols[k] = ci; break; } });
+          cols.tag = tagCol;
+        } else if(filled.length === 1 && barnByText(filled[0])) barn = barnByText(filled[0]);
+        continue;
+      }
+      if(!filled.length) continue;
+      const tagVal = row[cols.tag];
+      // строка-раздел: «Загон № 3 Ярки» или «Карантин»
+      if(tagVal == null || tagVal === ''){
+        const first = filled[0];
+        const b = barnByText(first);
+        if(b && filled.length === 1){ barn = b; pen = null; penInfo = null; continue; }
+        const pi = /загон/i.test(first) ? parsePenText(first) : null;
+        if(pi){
+          penInfo = pi; pen = penIdFor(barn, pi.n, pi.letter);
+          if(!barn) issue('warn', where, `«${first}»: не понятно, к какому помещению относится загон — животные попадут «Без загона».`);
+          else if(!pen) issue('warn', where, `${barn.name}: загона «${pi.n}${pi.letter}» нет в приложении — животные попадут «Без загона».`);
+          else {
+            const lbl = (pi.to ? `загоны ${pi.n}–${pi.to}` : '') + (pi.label ? (pi.to ? ': ' : '') + pi.label : '');
+            pens[pen] = {label:lbl, rations:{}, heads:0};
+            if(pi.to) for(let k = pi.n + 1; k <= pi.to; k++){ const other = penIdFor(barn, k, ''); if(other) pens[other] = {label:`вместе с загоном ${pi.n}`, rations:{}, heads:0, merged:true}; }
+          }
+          continue;
+        }
+        if(filled.some(t => /\d/.test(t)) && cols.cat != null && row[cols.cat]) issue('warn', where, 'Нет номера бирки — строка пропущена.');
+        continue;
+      }
+      const {tag, name, noTag} = splitTag(tagVal);
+      const catText = cols.cat != null ? String(row[cols.cat] ?? '').trim() : '';
+      const sexText = cols.sex != null ? row[cols.sex] : '';
+      let {sex, sp} = sexSpecies(sexText, catText);
+      if(!sp && cols.species != null){ const v = norm(row[cols.species]); sp = /коз/.test(v) ? 'goat' : /овц|баран/.test(v) ? 'sheep' : null; }
+      if(!sp) sp = barn?.id === 'k' ? 'goat' : 'sheep';
+      const a = {
+        tag, name: name || (cols.name != null ? String(row[cols.name] ?? '').trim() : ''), noTag, species:sp, sex:sex || 'f', sexGuess:!sex,
+        cat:catText, birth: cols.birth != null ? xlDate(row[cols.birth]) : '', since: cols.since != null ? xlDate(row[cols.since]) : '',
+        note: cols.note != null ? String(row[cols.note] ?? '').trim() : '', breed: cols.breed != null ? String(row[cols.breed] ?? '').trim() : '',
+        motherTag: cols.mother != null ? String(row[cols.mother] ?? '').trim() : '', fatherTag: cols.father != null ? String(row[cols.father] ?? '').trim() : '',
+        weight: cols.weight != null ? dec(row[cols.weight]) : NaN, rationNo: cols.ration != null ? String(row[cols.ration] ?? '').replace(/[^\d]/g, '') : '',
+        pen, barn: barn?.name || '', where, sheet: sh.name, row: ri + 1
+      };
+      if(cols.pen != null && row[cols.pen] != null){ const pi = parsePenText('загон ' + row[cols.pen]); if(pi){ a.pen = penIdFor(barn, pi.n, pi.letter); } }
+      if(cols.barn != null && row[cols.barn]){ const b = barnByText(row[cols.barn]); if(b && cols.pen != null){ const pi = parsePenText('загон ' + row[cols.pen]); if(pi) a.pen = penIdFor(b, pi.n, pi.letter); } }
+      if(a.pen && pens[a.pen]){ pens[a.pen].heads++; if(a.rationNo) pens[a.pen].rations[a.rationNo] = (pens[a.pen].rations[a.rationNo] || 0) + 1; }
+      const om = a.note.match(/окот\w*\s*(\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4})/i);
+      if(om) births.push({motherIdx:animals.length, date:xlDate(om[1]), kidTags:(a.note.slice(om.index + om[0].length).match(/\d{2,}[\d\-]*/g) || [])});
+      animals.push(a);
+    }
+    if(!cols) issue('warn', sh.name, 'Не найдена строка с заголовком «№ бирки» — лист пропущен.');
+  }
+  // номера без бирки
+  let bn = 0; const used = new Set([...animals.map(a => norm(a.tag)), ...S.animals.map(a => norm(a.tag))]);
+  animals.filter(a => a.noTag).forEach(a => { do { bn++; a.tag = `б/н-${bn}`; } while(used.has(norm(a.tag))); used.add(norm(a.tag)); a.note = [a.note, 'в файле без номера бирки'].filter(Boolean).join('; '); issue('info', a.where, `Без номера бирки — записана как ${a.tag}.`); });
+  // повторы в файле
+  const seen = {};
+  animals.forEach(a => {
+    const key = a.species + '|' + norm(a.tag), other = seen[key];
+    if(other){ a.skip = true; issue('warn', a.where, `Бирка ${a.tag} (${SPECIES[a.species].toLowerCase()}) уже есть: ${other.where}${other.pen ? ' — ' + penLong(other.pen) : ''}. Повтор пропущен, проверьте, где животное на самом деле.`); }
+    else seen[key] = a;
+  });
+  const bySpeciesTag = {}; animals.filter(a => !a.skip).forEach(a => (bySpeciesTag[norm(a.tag)] ||= []).push(a));
+  Object.values(bySpeciesTag).filter(l => l.length > 1).forEach(l => issue('info', l.map(a => a.where).join(' и '), `Бирка ${l[0].tag} есть и у овцы, и у козы — загружены оба животных.`));
+  animals.filter(a => !a.skip && a.sexGuess).forEach(a => issue('info', a.where, `Бирка ${a.tag}: пол не указан — записана как самка, поправьте при необходимости.`));
+  animals.filter(a => !a.skip && !a.pen).forEach(a => issue('warn', a.where, `Бирка ${a.tag}: загон не определён — попадёт «Без загона».`));
+  // совпадения с тем, что уже есть в приложении
+  animals.filter(a => !a.skip).forEach(a => { a.existing = S.animals.find(x => x.status === 'active' && x.species === a.species && norm(x.tag) === norm(a.tag)) || null; });
+  // рационы по загонам — по большинству животных
+  Object.values(pens).forEach(p => { const e = Object.entries(p.rations).sort((x, y) => y[1] - x[1]); p.ration = e[0]?.[0] || null; p.mixed = e.length > 1; });
+  Object.entries(pens).forEach(([id, p]) => { if(p.mixed) issue('info', penLong(id), `В загоне животные с разными рационами (${Object.entries(p.rations).map(([k, n]) => `№${k}: ${n}`).join(', ')}) — назначен №${p.ration}.`); });
+  Object.values(rationsFound).forEach(r => { const sum = r.items.reduce((s, x) => s + x.g, 0); if(r.total && Math.abs(sum - r.total) > 1) issue('warn', `Рацион №${r.no}`, `Сумма кормов ${sum} г, а в итоге указано ${r.total} г на сутки. Загружено ${sum} г — проверьте состав.`); });
+  const usedNos = new Set(Object.values(pens).map(p => p.ration).filter(Boolean));
+  usedNos.forEach(no => { if(!rationsFound[no]) issue('info', `Рацион №${no}`, 'Состав не найден в файле — рацион не создаётся, назначьте вручную.'); });
+  return {animals, issues, pens, rations:rationsFound, births};
+}
+
+// Запись плана в базу
+function applyImportPlan(plan, opt){
+  const list = plan.animals.filter(a => !a.skip);
+  const ids = list.map(a => a.existing ? a.existing.id : S.be.newId('animals'));
+  const idx = new Map(list.map((a, i) => [a, i]));
+  const byTag = {}; list.forEach((a, i) => (byTag[norm(a.tag)] ||= []).push(i));
+  const findId = (t, sp) => { const l = byTag[norm(t)] || []; const i = l.find(k => list[k].species === sp) ?? l[0]; if(i != null) return ids[i]; return S.animals.find(x => norm(x.tag) === norm(t))?.id || ''; };
+  let created = 0, updated = 0;
+  list.forEach((a, i) => {
+    const data = {tag:a.tag, species:a.species, sex:a.sex, status:'active', pen:a.pen || ''};
+    for(const k of ['name','cat','birth','since','note','breed','rationNo']) if(a[k]) data[k] = a[k];
+    if(a.rationNo) data.rationNo = '№' + a.rationNo;
+    if(a.motherTag){ const m = findId(a.motherTag, a.species); if(m) data.motherId = m; else data.motherText = a.motherTag; }
+    if(a.fatherTag){ const f = findId(a.fatherTag, a.species); if(f) data.fatherId = f; else data.fatherText = a.fatherTag; }
+    if(a.existing){ store.merge('animals', ids[i], data); updated++; }
+    else { store.set('animals', ids[i], {...data, by:S.uid||null, byEmail:S.email||null, created:Date.now(), source:'excel'}); created++; }
+    if(a.weight > 0) store.add('events', {animalIds:[ids[i]], type:'weight', date:a.since || today(), weight:round(a.weight, 1), note:'из Excel'});
+  });
+  let birthsMade = 0;
+  if(opt.births) plan.births.forEach(b => {
+    const mom = plan.animals[b.motherIdx]; if(mom.skip || !b.date) return;
+    const mid = ids[idx.get(mom)], kids = b.kidTags.map(t => { const l = byTag[norm(t)] || []; return l.find(k => list[k].species === mom.species); }).filter(k => k != null);
+    store.add('events', {animalIds:[mid], type:'birth', date:b.date, count:kids.length || b.kidTags.length, note:'из Excel: ' + mom.note});
+    kids.forEach(k => store.merge('animals', ids[k], {motherId:mid, ...(list[k].birth ? {} : {birth:b.date})}));
+    birthsMade++;
+  });
+  if(opt.labels) Object.entries(plan.pens).forEach(([pid, p]) => { if(p.label) store.merge('pens', pid, {label:p.label}); });
+  let rationsMade = 0;
+  if(opt.rations){
+    const items = [...S.items]; const itemId = name => {
+      const nn = norm(name).replace(/[^a-zа-я0-9 ]/g, '');
+      const ex = items.find(i => i.cat === 'feed' && norm(i.name).replace(/[^a-zа-я0-9 ]/g, '') === nn); if(ex) return ex.id;
+      const id = store.add('items', {name:name.charAt(0).toUpperCase() + name.slice(1), unit:'кг', cat:'feed'}); items.push({id, name, cat:'feed'}); return id;
+    };
+    const rid = {};
+    Object.values(plan.rations).forEach(r => {
+      const name = `Рацион №${r.no}`, data = {name, mode:'head', items:r.items.map(x => ({item:itemId(x.name), qty:round(x.g / 1000, 3)})), note:'из Excel'};
+      const ex = S.rations.find(x => norm(x.name) === norm(name));
+      if(ex){ store.set('rations', ex.id, {...strip(ex), ...data}); rid[r.no] = ex.id; } else rid[r.no] = store.add('rations', data);
+      rationsMade++;
+    });
+    let any = false;
+    Object.entries(plan.pens).forEach(([pid, p]) => { if(p.ration && rid[p.ration]){ store.merge('pens', pid, {ration:rid[p.ration]}); any = true; } });
+    if(any) ensureFeedStart();
+  }
+  return {created, updated, birthsMade, rationsMade};
+}
+
+function importSheet(){
+  const body = `<p class="muted" style="margin:0">Выберите файл Excel (.xlsx) со списком животных. Приложение само найдёт столбцы «№ бирки», «Категория», «Пол», «Дата рождения», «Примечание», «Рацион» и строки «Загон № …». Листы называйте как помещения: «Овчарня 1», «Овчарня 2», «Козлятник»; раздел «Карантин» можно вести внутри листа.</p>
+    <label class="btn primary filebtn"><input type="file" id="imf" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">Выбрать файл</label>
+    <div id="imres"></div>`;
+  openSheet('Загрузка из Excel', body, s => {
+    const inp = s.querySelector('#imf'), res = s.querySelector('#imres');
+    inp.onchange = async () => {
+      const f = inp.files[0]; if(!f) return;
+      res.innerHTML = `<p class="muted">Читаем «${esc(f.name)}»…</p>`;
+      let plan;
+      try{
+        if(!/\.xlsx$/i.test(f.name)) throw new Error('ext');
+        plan = buildImportPlan(await readXlsx(await f.arrayBuffer()));
+      }catch(e){
+        res.innerHTML = `<p class="err">${e.message === 'ext' || e.message === 'not_xlsx' ? 'Это не файл .xlsx. Откройте его в Excel и сохраните как «Книга Excel (.xlsx)».' : 'Не удалось прочитать файл: ' + esc(e.message || 'ошибка')}</p>`;
+        return;
+      }
+      const list = plan.animals.filter(a => !a.skip);
+      if(!list.length){ res.innerHTML = `<p class="err">В файле не нашлось животных. Нужна строка заголовков со столбцом «№ бирки».</p>`; return; }
+      const nNew = list.filter(a => !a.existing).length, nUpd = list.length - nNew;
+      const byPen = {}; list.forEach(a => { const k = a.pen || ''; byPen[k] = (byPen[k] || 0) + 1; });
+      const warns = plan.issues.filter(i => i.level === 'warn'), infos = plan.issues.filter(i => i.level === 'info');
+      const rCount = Object.keys(plan.rations).length;
+      res.innerHTML = `
+        <div class="stats"><div class="stat"><div class="v">${list.length}</div><div class="l">животных в файле${nUpd ? ` · ${nUpd} уже есть, обновятся` : ''}</div></div>
+          <div class="stat"><div class="v">${list.filter(a => a.species === 'sheep').length} / ${list.filter(a => a.species === 'goat').length}</div><div class="l">овец / коз</div></div></div>
+        <div class="panel"><div class="eyebrow">Куда попадут</div>
+          ${BARNS.map(b => { const ps = PENS.filter(p => p.barn === b && byPen[p.id]); if(!ps.length) return ''; return `<div class="kv"><span>${b.name}</span><strong>${heads(ps.reduce((x, p) => x + byPen[p.id], 0))}</strong></div><p class="muted" style="margin:0 0 4px">${ps.map(p => `${p.n}${plan.pens[p.id]?.label ? ' (' + esc(plan.pens[p.id].label) + ')' : ''} — ${byPen[p.id]}`).join(' · ')}</p>`; }).join('')}
+          ${byPen[''] ? `<div class="kv"><span>Без загона</span><strong>${heads(byPen[''])}</strong></div>` : ''}
+        </div>
+        ${warns.length ? `<details class="issues" open><summary>Проверьте: ${warns.length}</summary><ul>${warns.map(i => `<li><b>${esc(i.where)}</b> — ${esc(i.text)}</li>`).join('')}</ul></details>` : ''}
+        ${infos.length ? `<details class="issues info"><summary>Замечания: ${infos.length}</summary><ul>${infos.map(i => `<li><b>${esc(i.where)}</b> — ${esc(i.text)}</li>`).join('')}</ul></details>` : ''}
+        <div class="list">
+          <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="im-labels" checked><span>Подписать загоны названиями из файла <span class="muted">(«Дойные», «Ярки»…)</span></span></label>
+          ${plan.births.length ? `<label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="im-births" checked><span>Записать окоты из примечаний: ${plan.births.length}</span></label>` : ''}
+          ${rCount ? `<label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="im-rations"><span>Создать рационы ${Object.keys(plan.rations).map(n => '№' + n).join(', ')} из файла и назначить загонам<br><span class="muted">Корма из рационов добавятся на склад. С сегодняшнего дня зерно начнёт списываться по головам — внесите приход, иначе остаток уйдёт в минус.</span></span></label>` : ''}
+        </div>
+        <div class="actions"><button class="btn primary" id="imgo">Загрузить ${heads(list.length)}</button></div>`;
+      res.querySelector('#imgo').onclick = () => {
+        const btn = res.querySelector('#imgo'); btn.disabled = true; btn.textContent = 'Загружаем…';
+        const r = applyImportPlan(plan, {labels:res.querySelector('#im-labels')?.checked, births:res.querySelector('#im-births')?.checked, rations:res.querySelector('#im-rations')?.checked});
+        toast(`Загружено: новых ${r.created}, обновлено ${r.updated}${r.birthsMade ? `, окотов ${r.birthsMade}` : ''}${r.rationsMade ? `, рационов ${r.rationsMade}` : ''}`);
+        closeSheet(); go('pens');
+      };
+    };
+  }, 'import');
+}
+
 /* ===== Старт ===== */
 boot();
+window.OTARA = {S, PEN, feedUse, byId, itemById, rationById}; // для отладки
