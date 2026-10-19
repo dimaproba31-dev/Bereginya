@@ -46,7 +46,7 @@ const DEFAULT_ITEMS = {
 const COLS = ['animals','events','finance','items','moves','rations','pens','feedauto','milk','milkout','settings'];
 
 /* ===== Состояние и помощники ===== */
-const S = {tab:'herd', filter:'active', q:'', month:null, milkDate:null, stockCat:'feed',
+const S = {tab:'home', herdMode:'groups', filter:'',  q:'', month:null, milkDate:null, stockCat:'feed',
   uid:null, email:null, mode:'loading', local:false, demo:false, be:null, loaded:{}, pending:{}};
 COLS.forEach(c => S[c] = []);
 const $ = s => document.querySelector(s);
@@ -358,7 +358,7 @@ function planItems(){
 const urgency = date => { const d = daysBetween(today(), date); return d < 0 ? 'over' : d <= 7 ? 'soon' : 'later'; };
 
 /* ===== Отрисовка ===== */
-const NAV_OF = {herd:'herd', pens:'pens', milk:'milk', stock:'stock', more:'more', plan:'more', money:'more', stats:'more'};
+const NAV_OF = {home:'home', herd:'herd', pens:'herd', milk:'milk', stock:'stock', more:'more', plan:'more', money:'more', stats:'more'};
 function render(){
   const v = $('#view'), live = S.mode==='live';
   $('nav.tabs').hidden = !live;
@@ -367,10 +367,10 @@ function render(){
   const urgent = plan.filter(i => daysBetween(today(), i.date) <= 7).length;
   const b = $('#moreBadge'); b.hidden = !urgent; b.textContent = urgent;
   document.querySelectorAll('nav.tabs button').forEach(x => x.dataset.tab===NAV_OF[S.tab] ? x.setAttribute('aria-current','page') : x.removeAttribute('aria-current'));
-  $('#fab').hidden = !['herd','milk','stock','plan','money'].includes(S.tab);
+  $('#fab').hidden = !['herd','milk','stock','plan','money'].includes(S.tab) || (S.tab==='herd' && S.herdMode==='pens');
   let html = '';
   if(S.demo) html += `<div class="banner">Демо-режим: всё хранится только в этом браузере.${S.animals.some(a => a.demo) ? ` Сейчас открыт пример хозяйства. <button class="link" data-act="clear-demo">Очистить пример</button>` : ''}</div>`;
-  html += ({herd:herdView, pens:pensView, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
+  html += ({home:homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
   const focus = document.activeElement?.id, pos = document.activeElement?.selectionStart;
   v.innerHTML = html;
   bindView();
@@ -419,6 +419,52 @@ function bindGate(){
   if(lo) lo.onclick = () => fb && fb.au.signOut(fb.auth);
 }
 
+
+/* ----- Главная ----- */
+const ICON = {
+  milk:'<path d="M9 2h6M10 2v3l-3 4v11a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9l-3-4V2"/><path d="M7 13h10"/>',
+  plus:'<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>',
+  birth:'<path d="M12 21c4-2.5 7-5.5 7-9.5A4.5 4.5 0 0 0 12 8a4.5 4.5 0 0 0-7 3.5c0 4 3 7 7 9.5z"/>',
+  vet:'<path d="M10 3h4v7h7v4h-7v7h-4v-7H3v-4h7z"/>',
+  feed:'<path d="M3 8l9-5 9 5v12H3z"/><path d="M7 20v-8h10v8"/>',
+  fuel:'<path d="M4 21V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v16"/><path d="M3 21h13M15 9h2a2 2 0 0 1 2 2v6a1.5 1.5 0 0 0 3 0V8l-3-3"/><path d="M7 7h5"/>',
+  truck:'<path d="M3 7h11v9H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
+  move:'<path d="M4 7h13l-3-3M20 17H7l3 3"/>'
+};
+const ico = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
+function homeView(){
+  if(loading('milk','items','moves','events')) return `<div class="empty"><p>Загружаем…</p></div>`;
+  const t = today(), act = S.animals.filter(a => a.status==='active');
+  const milkDay = ['am','pm'].reduce((x, ss) => x + milkTotal(milkDoc(t, ss, 'goat')) + milkTotal(milkDoc(t, ss, 'sheep')), 0);
+  const plan = planItems(), soon = plan.filter(i => daysBetween(t, i.date) <= 7);
+  const bal = stockBalance(), {use} = feedUse();
+  const feedDays = S.items.filter(i => i.cat==='feed' && use[i.id] > 0).map(i => ({i, d: Math.floor((bal[i.id]||0) / use[i.id])})).sort((a,b) => a.d - b.d);
+  const low = feedDays[0];
+  const dateLabel = new Date().toLocaleDateString('ru-RU', {weekday:'long', day:'numeric', month:'long'});
+  const stat = (nav, label, value, sub, cls='') => `<button class="stile ${cls}" data-nav="${nav}"><span class="sl">${label}</span><span class="sv">${value}</span><span class="ss">${sub}</span></button>`;
+  let h = `<div class="hello"><h1>${dateLabel[0].toUpperCase() + dateLabel.slice(1)}</h1></div>
+    <div class="stiles">
+      ${stat('herd', 'Поголовье', act.length, `овец ${act.filter(a=>a.species==='sheep').length} · коз ${act.filter(a=>a.species==='goat').length}`)}
+      ${stat('milk', 'Надой сегодня', `${num(milkDay)} <small>л</small>`, milkDay ? 'нажмите, чтобы посмотреть' : 'ещё не записан')}
+      ${stat('stock', 'Корма', low ? `${Math.max(low.d,0)} <small>дн.</small>` : '—', low ? (low.d < 10 ? `мало: ${esc(low.i.name)}` : 'хватит надолго') : 'рационы не назначены', low && low.d < 10 ? 'warn' : '')}
+      ${stat('plan', 'Дела на неделю', soon.length, soon.length ? 'есть что сделать' : 'всё спокойно', soon.some(i => daysBetween(t, i.date) < 0) ? 'warn' : '')}
+    </div>
+    <h2 class="sec">Быстрые действия</h2>
+    <div class="qgrid">
+      <button class="qbtn" data-act="milkquick">${ico('milk')}<span>Записать надой</span></button>
+      <button class="qbtn" data-act="add-animal">${ico('plus')}<span>Добавить животное</span></button>
+      <button class="qbtn" data-act="q-birth">${ico('birth')}<span>Записать окот</span></button>
+      <button class="qbtn" data-act="q-vet">${ico('vet')}<span>Обработка, прививка</span></button>
+      <button class="qbtn" data-act="q-feed">${ico('feed')}<span>Приход корма</span></button>
+      <button class="qbtn" data-act="q-fuel">${ico('fuel')}<span>Выдать топливо</span></button>
+      <button class="qbtn" data-act="milkout">${ico('truck')}<span>Отгрузка молока</span></button>
+      <button class="qbtn" data-nav="herd" data-hm2="pens">${ico('move')}<span>Перевести по загонам</span></button>
+    </div>`;
+  if(soon.length) h += `<div class="kv"><h2 class="sec">Ближайшие дела</h2><button class="link" data-nav="plan">Все</button></div>
+    <div class="plan">${soon.slice(0,3).map(it => { const d = daysBetween(t, it.date); return `<div class="task ${urgency(it.date)}"><div class="when"><b>${fmtShort(it.date).split(' ')[0]}</b>${fmtShort(it.date).split(' ')[1]||''}</div><div class="what"><div class="t">${esc(it.title)}</div><div class="s">${esc(it.sub)} · ${d<0?'просрочено':d===0?'сегодня':'через '+d+' '+plural(d,'день','дня','дней')}</div></div></div>`; }).join('')}</div>`;
+  return h;
+}
+
 /* ----- Стадо ----- */
 const FILTERS = {
   active:['Все', a=>a.status==='active'],
@@ -434,6 +480,7 @@ function filterFn(f){
   if(f && f.startsWith('g:')){ const [, sp, g] = f.split(':'); return a => a.status==='active' && a.species===sp && groupOf(a)===g; }
   return (FILTERS[f] || FILTERS.active)[1];
 }
+function herdTabs(){ return `<div class="segb" role="group" aria-label="Вид"><button data-hm="groups" aria-pressed="${S.herdMode!=='pens'}">По группам</button><button data-hm="pens" aria-pressed="${S.herdMode==='pens'}">По загонам</button></div>`; }
 function filterName(f){
   if(f && f.startsWith('g:')){ const [, sp, g] = f.split(':'); return `${SPECIES_PL[sp]}: ${groupName(sp, g).toLowerCase()}`; }
   return (FILTERS[f] || FILTERS.active)[0];
@@ -445,17 +492,23 @@ function herdView(){
     .filter(a => !q || [a.tag, a.name, a.breed, a.cat, groupName(a.species, groupOf(a)), penShort(a.pen), penLong(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q)))
     .sort(tagSort);
   if(loading()) return `<div class="empty"><p>Загружаем стадо…</p></div>`;
+  const listMode = !!S.filter || !!q;
   if(!all.length) return `<div class="empty"><h2>Стадо пока пустое</h2><p>Добавьте первое животное: номер бирки, вид, пол, загон и дату рождения. Мать, отца и вес можно заполнить позже.</p><div class="actions"><button class="btn primary" data-act="add-animal">Добавить животное</button><button class="btn" data-act="import">Загрузить из Excel</button></div></div>`;
   const cnt = {}; act.forEach(a => { const k = a.species + ':' + groupOf(a); cnt[k] = (cnt[k]||0) + 1; });
   const nSheep = act.filter(a => a.species==='sheep').length, nGoat = act.length - nSheep;
-  const block = sp => `<div class="gblock"><div class="gtitle"><span class="lg"><i style="background:var(--${sp})"></i>${SPECIES_PL[sp]}</span><b>${sp==='sheep'?nSheep:nGoat}</b></div>
+  const block = sp => !(sp==='sheep'?nSheep:nGoat) ? '' : `<div class="gblock"><div class="gtitle"><span class="lg"><i style="background:var(--${sp})"></i>${SPECIES_PL[sp]}</span><b>${sp==='sheep'?nSheep:nGoat}</b></div>
     <div class="ggrid">${GROUPS[sp].map(([g, l]) => { const f = `g:${sp}:${g}`, n = cnt[sp+':'+g]||0;
-      return `<button class="gbtn ${n?'':'zero'}" data-f="${f}" aria-pressed="${S.filter===f}"><span>${l}</span><b>${n}</b></button>`; }).join('')}</div></div>`;
-  let h = `<div class="herdtop"><div class="eyebrow">Всего поголовье</div><div class="bignum">${act.length}</div><div class="muted">овец ${nSheep}, коз ${nGoat}</div></div>
-    ${block('sheep')}${block('goat')}
-    <div class="chips" role="group" aria-label="Фильтр">${Object.entries(FILTERS).map(([k,[l,f]]) => { const n = all.filter(f).length; return (n || k==='active' || S.filter===k) ? `<button class="chip" data-f="${k}" aria-pressed="${S.filter===k}">${l}<b>${n}</b></button>` : ''; }).join('')}</div>
-    <div class="search"><input id="q" type="search" placeholder="Бирка, кличка, порода, загон, группа" value="${esc(S.q)}" autocomplete="off"></div>
-    <div class="kv listhead"><span class="eyebrow">${esc(filterName(S.filter))} · ${list.length}</span>${S.filter!=='gone' && list.some(a => a.status==='active') ? `<button class="link" data-act="regroup">Перевести в группу…</button>` : ''}</div>`;
+      return n ? `<button class="gbtn" data-f="${f}"><span>${l}</span><b>${n}</b></button>` : ''; }).join('')}</div></div>`;
+  const search = `<div class="search"><input id="q" type="search" placeholder="Найти по номеру бирки или кличке" value="${esc(S.q)}" autocomplete="off"></div>`;
+  if(!listMode){
+    const extra = ['nogroup','quarantine','nopen','gone'].map(k => { const n = all.filter(FILTERS[k][1]).length; return n ? `<button class="gbtn soft" data-f="${k}"><span>${FILTERS[k][0]}</span><b>${n}</b></button>` : ''; }).join('');
+    return search + `<div class="hero"><div><div class="hero-l">Всего поголовье</div><div class="bignum">${act.length}</div></div><div class="hero-r"><span><i style="background:var(--sheep)"></i>Овцы <b>${nSheep}</b></span><span><i style="background:var(--goat)"></i>Козы <b>${nGoat}</b></span></div></div>
+      ${block('sheep')}${block('goat')}
+      ${extra ? `<div class="gblock"><div class="gtitle"><span>Требуют внимания</span></div><div class="ggrid">${extra}</div></div>` : ''}
+      <button class="gbtn wide" data-f="active"><span>Весь список животных</span><b>${act.length} ›</b></button>`;
+  }
+  let h = `<div class="listtop"><button class="back" data-f="">‹ Стадо</button>${search}
+    <div class="kv listhead"><h2>${esc(q && !S.filter ? 'Поиск' : filterName(S.filter))} · ${list.length}</h2>${S.filter!=='gone' && list.some(a => a.status==='active') ? `<button class="btn small" data-act="regroup">Перевести в группу</button>` : ''}</div></div>`;
   if(!list.length) return h + `<div class="empty"><p>${S.filter==='nogroup' ? 'Все животные распределены по группам.' : 'Под этот фильтр никто не подходит.'}</p></div>`;
   return h + `<div class="list">` + list.map(a => {
     const w = lastWeight(a.id), g = groupOf(a);
@@ -500,7 +553,7 @@ function rationText(r){
 function pensView(){
   if(loading('pens','rations')) return `<div class="empty"><p>Загружаем…</p></div>`;
   const {perPen} = feedUse();
-  let h = `<div><div class="eyebrow">Размещение и кормление</div><h2>Загоны</h2></div>`;
+  let h = '';
   const loose = S.animals.filter(a => a.status==='active' && !PEN[a.pen]);
   if(loose.length) h += `<button class="banner as-btn" data-pen="">Без загона: ${heads(loose.length)}. Нажмите, чтобы распределить.</button>`;
   for(const b of BARNS){
@@ -751,7 +804,9 @@ function statsView(){
 function bindView(){
   const v = $('#view'), on = (sel, fn) => v.querySelectorAll(sel).forEach(b => b.onclick = () => fn(b));
   const q = $('#q'); if(q) q.oninput = () => { S.q = q.value; render(); };
-  on('[data-f]', b => { S.filter = b.dataset.f; render(); });
+  on('[data-f]', b => { S.filter = b.dataset.f; if(!S.filter) S.q = ''; window.scrollTo(0,0); render(); });
+  on('[data-hm]', b => { S.herdMode = b.dataset.hm; window.scrollTo(0,0); render(); });
+  on('[data-nav]', b => { if(b.dataset.f2 != null) S.filter = b.dataset.f2; if(b.dataset.hm2) S.herdMode = b.dataset.hm2; S.tab = b.dataset.nav; window.scrollTo(0,0); render(); });
   on('[data-open]', b => animalCard(b.dataset.open));
   on('[data-pen]', b => penSheet(b.dataset.pen));
   on('[data-ration]', b => rationForm(rationById(b.dataset.ration)));
@@ -776,11 +831,11 @@ function bindView(){
   on('[data-act]', b => ({
     'add-animal':() => animalForm(), 'add-fin':() => financeForm(), 'add-ration':() => rationForm(),
     'add-item':() => itemForm({cat:S.stockCat}), 'seed-items':seedItems, 'milkout':() => milkOutForm(),
-    'feed-log':feedLogSheet, 'add-fuel':() => itemForm({cat:'fuel'}), 'add-vehicle':() => itemForm({cat:'vehicle'}), milkquick:() => milkQuickForm(S.milkDate||today(), defaultSession()), import:importSheet, regroup:() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); regroupSheet(ids, filterName(S.filter)); }, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
+    'feed-log':feedLogSheet, 'q-birth':() => eventForm({type:'birth'}), 'q-vet':() => eventForm({type:'vac'}), 'q-feed':() => moveForm({cat:'feed', kind:'in'}), 'q-fuel':() => moveForm({cat:'fuel', kind:'out'}), 'add-fuel':() => itemForm({cat:'fuel'}), 'add-vehicle':() => itemForm({cat:'vehicle'}), milkquick:() => milkQuickForm(S.milkDate||today(), defaultSession()), import:importSheet, regroup:() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); regroupSheet(ids, filterName(S.filter)); }, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
     logout:() => fb && fb.au.signOut(fb.auth)
   })[b.dataset.act]?.());
 }
-function go(tab){ S.tab = tab; window.scrollTo(0,0); render(); }
+function go(tab){ if(tab==='herd' && S.tab==='herd'){ S.filter=''; S.q=''; } S.tab = tab; window.scrollTo(0,0); render(); }
 document.querySelectorAll('nav.tabs button').forEach(b => b.onclick = () => go(b.dataset.tab));
 $('#fab').onclick = () => ({
   herd:() => animalForm(), milk:() => milkQuickForm(S.milkDate||today(), defaultSession()),
@@ -923,19 +978,21 @@ function animalForm(a, pre){
       ${fld('a-name','Кличка',`<input id="a-name" name="name" value="${esc(v.name)}">`)}</div>
     <div class="field"><label>Вид</label><div class="seg">${Object.entries(SPECIES).map(([k,l]) => `<label><input type="radio" name="species" value="${k}" ${v.species===k?'checked':''}>${l}</label>`).join('')}</div></div>
     <div class="field"><label>Пол</label><div class="seg"><label><input type="radio" name="sex" value="f" ${v.sex==='f'?'checked':''}>Самка ♀</label><label><input type="radio" name="sex" value="m" ${v.sex==='m'?'checked':''}>Самец ♂</label></div></div>
-    <div class="two">${fld('a-pen','Загон',`<select id="a-pen" name="pen">${penOptions(v.pen)}</select>`)}
-      ${fld('a-group','Группа',`<select id="a-group" name="group"></select>`)}</div>
+    ${fld('a-group','Группа',`<select id="a-group" name="group"></select>`)}
+    ${fld('a-pen','Загон',`<select id="a-pen" name="pen">${penOptions(v.pen)}</select>`)}
     ${v.cat ? `<p class="muted" style="margin:-4px 0 0">Категория из файла: ${esc(v.cat)}</p>` : ''}
-    <div class="two">${fld('a-birth','Дата рождения',`<input id="a-birth" type="date" name="birth" value="${esc(v.birth)}" max="${today()}">`)}
-      ${fld('a-breed','Порода',`<input id="a-breed" name="breed" list="breeds" value="${esc(v.breed)}">`)}</div>
+    ${fld('a-birth','Дата рождения',`<input id="a-birth" type="date" name="birth" value="${esc(v.birth)}" max="${today()}">`)}
+    <details class="more" ${v.breed || v.motherId || v.fatherId || v.note ? 'open' : ''}><summary>Порода, родители, заметка</summary><div class="morebody">
+    ${fld('a-breed','Порода',`<input id="a-breed" name="breed" list="breeds" value="${esc(v.breed)}">`)}
     <datalist id="breeds">${[...new Set(['Романовская','Эдильбаевская','Лакон','Ассаф','Восточно-фризская','Катумская','Дорпер','Зааненская','Альпийская','Нубийская','Ламанча','Русская белая',...S.animals.map(x=>x.breed).filter(Boolean)])].map(b=>`<option value="${esc(b)}">`).join('')}</datalist>
     <div class="two">${fld('a-mother','Мать',`<select id="a-mother" name="motherId">${sel(females, v.motherId)}</select>`)}
       ${fld('a-father','Отец',`<select id="a-father" name="fatherId">${sel(males, v.fatherId)}</select>`)}</div>
+    ${fld('a-note','Заметка',`<textarea id="a-note" name="note">${esc(v.note)}</textarea>`)}
+    </div></details>
     <div class="two">${fld('a-status','Статус',`<select id="a-status" name="status">${Object.entries(STATUS).map(([k,l]) => opt(k,l,v.status)).join('')}</select>`)}
       <div class="field" id="outWrap" ${v.status==='active'?'hidden':''}><label for="a-out">Дата выбытия</label><input id="a-out" type="date" name="outDate" value="${esc(v.outDate||today())}"></div></div>
     <div class="field" id="priceWrap" hidden><label for="a-price">Сумма продажи, ₽ (попадёт в финансы)</label><input id="a-price" name="price" type="number" min="0" step="1" inputmode="numeric"></div>
     ${!a ? fld('a-w','Вес сейчас, кг',`<input id="a-w" name="weight" inputmode="decimal" autocomplete="off">`) : ''}
-    ${fld('a-note','Заметка',`<textarea id="a-note" name="note">${esc(v.note)}</textarea>`)}
     <p class="err" id="aerr" hidden></p>
     <div class="actions"><button class="btn primary" type="submit">${a?'Сохранить':'Добавить в стадо'}</button></div>
     ${a ? `<div class="actions"><button class="btn danger" type="button" id="del">Удалить карточку</button></div><div id="delc"></div>` : ''}
@@ -1520,12 +1577,12 @@ function seedDemo(be){
     .forEach(([p,r]) => W('pens', {ration:rat[r]}, p));
   W('settings', {from:D(-10), paused:false}, 'feed');
   const A = (tag, o) => W('animals', {tag:String(tag), status:'active', ...o});
-  const ram1 = A(2001, {name:'Буян', sex:'m', species:'sheep', breed:'Лакон', birth:'2022-03-14', pen:'o1-19'});
-  const ram2 = A(2002, {sex:'m', species:'sheep', breed:'Лакон', birth:'2023-02-20', pen:'o1-19'});
-  const buck = A(3001, {name:'Граф', sex:'m', species:'goat', breed:'Зааненская', birth:'2022-04-02', pen:'k-10'});
-  const ewes = Array.from({length:12}, (_,i) => A(2101+i, {sex:'f', species:'sheep', breed:'Лакон', birth:`${2021+i%3}-0${2+i%4}-1${i%9}`, pen:`o1-${1+Math.floor(i/4)}`}));
+  const ram1 = A(2001, {name:'Буян', sex:'m', species:'sheep', breed:'Лакон', birth:'2022-03-14', pen:'o1-19', group:'ram'});
+  const ram2 = A(2002, {sex:'m', species:'sheep', breed:'Лакон', birth:'2023-02-20', pen:'o1-19', group:'ram'});
+  const buck = A(3001, {name:'Граф', sex:'m', species:'goat', breed:'Зааненская', birth:'2022-04-02', pen:'k-10', group:'buck'});
+  const ewes = Array.from({length:12}, (_,i) => A(2101+i, {sex:'f', species:'sheep', breed:'Лакон', birth:`${2021+i%3}-0${2+i%4}-1${i%9}`, pen:`o1-${1+Math.floor(i/4)}`, group: i >= 7 ? 'preg' : 'milk'}));
   const gnames = ['Зорька','Белка','Майка','Ночка','Дуня','Ласка','Роза','Звёздочка','Луна','Капля'];
-  const goats = gnames.map((n,i) => A(3101+i, {name:n, sex:'f', species:'goat', breed:'Зааненская', birth:`${2021+i%3}-0${3+i%5}-2${i%8}`, pen:`k-${1+Math.floor(i/4)}`}));
+  const goats = gnames.map((n,i) => A(3101+i, {name:n, sex:'f', species:'goat', breed:'Зааненская', birth:`${2021+i%3}-0${3+i%5}-2${i%8}`, pen:`k-${1+Math.floor(i/4)}`, group:'milk'}));
   A(4001, {sex:'f', species:'goat', breed:'Альпийская', birth:'2024-03-10', pen:'q-1', note:'Куплена, карантин 21 день'});
   A(4002, {sex:'f', species:'goat', breed:'Альпийская', birth:'2024-04-01', pen:'q-1', note:'Куплена, карантин 21 день'});
   const E = d => W('events', d);
@@ -2155,7 +2212,7 @@ function importSheet(){
         const btn = res.querySelector('#imgo'); btn.disabled = true; btn.textContent = 'Загружаем…';
         const r = applyImportPlan(plan, {labels:res.querySelector('#im-labels')?.checked, births:res.querySelector('#im-births')?.checked, rations:res.querySelector('#im-rations')?.checked});
         toast(`Загружено: новых ${r.created}, обновлено ${r.updated}${r.birthsMade ? `, окотов ${r.birthsMade}` : ''}${r.rationsMade ? `, рационов ${r.rationsMade}` : ''}`);
-        closeSheet(); go('pens');
+        closeSheet(); S.herdMode = 'pens'; go('herd');
       };
     };
   }, 'import');

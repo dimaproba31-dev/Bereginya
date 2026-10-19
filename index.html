@@ -3,35 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#2D6748">
+<meta name="theme-color" content="#F4F6F2">
 <title>Отара</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Golos+Text:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Golos+Text:wght@400;500;600&display=swap">
 <style>body{margin:0}[hidden]{display:none!important}img{max-width:100%}
 </style>
 <style>
 /* Layout: одноколоночное мобильное приложение — шапка, экран раздела, нижняя панель вкладок, выдвижные листы для карточек и форм */
 :root{
-  --bg:#EDF1EA; --surface:#FFFFFF; --sunk:#E3E8DF; --fg:#1B261F; --muted:#5C6A60; --line:#D3DBCF;
-  --accent:#2D6748; --accent-ink:#FFFFFF; --accent-soft:#D7E7DC;
-  --tag:#F2C230; --tag-ink:#2A2108;
-  --warn:#A86B12; --warn-soft:#F6E7C8; --bad:#B23E2B; --bad-soft:#F6D9D2; --good:#2D6748; --sheep:#B9822A; --goat:#2D6748;
-  --f-display:"Unbounded","Golos Text",system-ui,sans-serif;
+  /* Светлая спокойная тема: шалфейный фон, белые карточки, зелёный акцент */
+  --bg:#F4F6F2; --surface:#FFFFFF; --sunk:#EDF1EA; --fg:#1E2921; --muted:#67746B; --line:#E0E6DC;
+  --accent:#2F7A53; --accent-ink:#FFFFFF; --accent-soft:#E3F1E8;
+  --tag:#F4C542; --tag-ink:#2A2108;
+  --warn:#A26510; --warn-soft:#FBEED6; --bad:#B4412F; --bad-soft:#FBE3DD; --good:#2F7A53; --sheep:#D0942F; --goat:#3B7EA1;
+  --f-display:"Manrope","Golos Text",system-ui,sans-serif;
   --f-body:"Golos Text",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  --r:12px;
+  --r:16px; --shadow:0 1px 2px rgba(30,41,33,.05),0 2px 8px rgba(30,41,33,.05);
+  color-scheme:light;
 }
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#111713; --surface:#19211C; --sunk:#0D120F; --fg:#E3EBE5; --muted:#93A298; --line:#2A352E;
-  --accent:#73C292; --accent-ink:#0C1810; --accent-soft:#1F3428;
-  --tag:#DFB22A; --tag-ink:#1F1805;
-  --warn:#E3A94D; --warn-soft:#3A2D14; --bad:#E77E69; --bad-soft:#3D1E18; --good:#73C292; --sheep:#E2B05C; --goat:#73C292; color-scheme:dark}}
-:root[data-theme="dark"]{
-  --bg:#111713; --surface:#19211C; --sunk:#0D120F; --fg:#E3EBE5; --muted:#93A298; --line:#2A352E;
-  --accent:#73C292; --accent-ink:#0C1810; --accent-soft:#1F3428;
-  --tag:#DFB22A; --tag-ink:#1F1805;
-  --warn:#E3A94D; --warn-soft:#3A2D14; --bad:#E77E69; --bad-soft:#3D1E18; --good:#73C292; --sheep:#E2B05C; --goat:#73C292; color-scheme:dark}
 
 *{box-sizing:border-box}
 html,body{background:var(--bg)}
@@ -276,6 +268,81 @@ form{display:flex;flex-direction:column;gap:12px}
 .mcell small{font-size:11px;color:var(--muted)}
 .mcell em{font-style:normal;font-size:20px;color:var(--accent);font-weight:600}
 .sechead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:4px}
+
+/* ===== Простой светлый вид ===== */
+body{font-size:16px;line-height:1.5}
+h2{font-family:var(--f-display);font-weight:700;font-size:18px;letter-spacing:-.01em}
+h1{font-family:var(--f-display);font-weight:800;font-size:24px;margin:0;letter-spacing:-.02em}
+.brand{font-family:var(--f-display);font-weight:800;font-size:22px;letter-spacing:-.02em}
+.brand small{display:none}
+header.top{background:var(--bg);border-bottom:0}
+main .wrap{gap:18px;padding-block:8px 28px}
+.eyebrow{font-size:12px;letter-spacing:.04em}
+.list,.panel,.stat,.mday,.mcard,.task,.empty,.facts{border-radius:var(--r);box-shadow:var(--shadow);border-color:var(--line)}
+.empty{border-style:solid}
+.row{padding:14px 16px;gap:14px}
+.row .name{font-size:16px}
+.row .sub{font-size:14px}
+.btn{border-radius:12px;padding:12px 16px;min-height:48px;font-size:16px}
+.btn.small{min-height:36px;padding:7px 12px;font-size:14px}
+.btn.primary{box-shadow:0 2px 6px rgba(47,122,83,.25)}
+.chip{padding:8px 14px;font-size:14px}
+.search input,.field input,.field select,.field textarea,.irow select,.irow input{border-radius:12px;padding:12px 14px;font-size:16px;min-height:48px}
+.field label{font-size:13px}
+.seg{border-radius:12px}
+.seg label{padding:10px 6px;font-size:15px}
+.segb{border-radius:12px;padding:4px}
+.segb button{padding:10px 6px;font-size:15px;border-radius:9px}
+.sheet{border-radius:22px 22px 0 0;gap:16px}
+.sheet-head h2{font-size:20px}
+.fab{border-radius:20px;width:60px;height:60px;box-shadow:0 8px 20px rgba(47,122,83,.35)}
+nav.tabs{box-shadow:0 -2px 12px rgba(30,41,33,.06);border-top:0}
+nav.tabs button{font-size:12px;padding:10px 2px 12px}
+nav.tabs button[aria-current="page"] svg{background:var(--accent-soft);border-radius:999px;padding:3px 14px;box-sizing:content-box;width:22px;height:22px;margin:-3px 0}
+.tag{font-size:15px}
+/* главная */
+.hello h1{text-transform:none}
+.stiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.stile{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;background:var(--surface);border:0;border-radius:var(--r);box-shadow:var(--shadow);padding:14px 16px;min-width:0}
+.stile .sl{font-size:13px;color:var(--muted);font-weight:500}
+.stile .sv{font-family:var(--f-display);font-weight:800;font-size:30px;line-height:1.15;letter-spacing:-.02em}
+.stile .sv small{font-size:16px;color:var(--muted);font-weight:700}
+.stile .ss{font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.stile.warn{background:var(--warn-soft)}
+.stile.warn .ss{color:var(--warn);font-weight:600}
+h2.sec{font-size:17px;margin-top:4px}
+.qgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.qbtn{display:flex;align-items:center;gap:12px;background:var(--surface);border:0;border-radius:var(--r);box-shadow:var(--shadow);padding:14px;text-align:left;font-weight:600;font-size:15px;line-height:1.25;min-height:64px;min-width:0}
+.qbtn svg{flex:none;width:36px;height:36px;padding:7px;border-radius:12px;background:var(--accent-soft);color:var(--accent)}
+.qbtn:active,.stile:active,.gbtn:active{transform:scale(.98)}
+/* стадо */
+.hero{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;background:var(--accent);color:var(--accent-ink);border-radius:20px;padding:18px 20px;box-shadow:0 6px 18px rgba(47,122,83,.25)}
+.hero-l{font-size:14px;opacity:.85}
+.hero .bignum{font-family:var(--f-display);font-weight:800;font-size:48px;letter-spacing:-.03em;line-height:1}
+.hero-r{display:flex;flex-direction:column;gap:4px;font-size:15px;text-align:right}
+.hero-r i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;border:1.5px solid rgba(255,255,255,.8)}
+.hero-r b{font-weight:700;margin-left:4px}
+.gtitle{padding:0 2px}
+.gtitle .lg{font-size:16px}
+.gbtn{border:0;box-shadow:var(--shadow);border-radius:14px;padding:13px 14px;min-height:56px}
+.gbtn span{font-size:15px;font-weight:500}
+.gbtn b{font-family:var(--f-display);font-weight:800;font-size:20px}
+.gbtn.soft{background:var(--warn-soft);box-shadow:none}
+.gbtn.wide{width:100%;background:var(--surface)}
+.gbtn.wide b{font-size:16px;color:var(--accent)}
+.listtop{display:flex;flex-direction:column;gap:10px}
+.listhead h2{font-size:18px}
+.back{font-size:16px}
+details.more{background:var(--sunk);border-radius:12px;padding:12px 14px}
+details.more summary{cursor:pointer;font-weight:600;color:var(--accent)}
+.morebody{display:flex;flex-direction:column;gap:12px;margin-top:12px}
+.mtable th,.mtable td{font-size:15px}
+.mcell{border-radius:12px;min-height:54px;background:var(--sunk);border:0}
+.mcell b{font-size:19px}
+.pen{border-radius:12px;border:0;box-shadow:var(--shadow);padding:9px 10px}
+.pen.empty{box-shadow:none;border:1px dashed var(--line)}
+.pen.q{box-shadow:inset 0 0 0 1.5px var(--warn)}
+@media (max-width:360px){.qbtn{font-size:14px;padding:12px}.stile .sv{font-size:26px}}
 </style>
 </head>
 <body>
@@ -289,8 +356,8 @@ form{display:flex;flex-direction:column;gap:12px}
 <button class="fab" id="fab" aria-label="Добавить">+</button>
 
 <nav class="tabs" aria-label="Разделы"><div class="wrap">
-  <button data-tab="herd" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 14c-1.7 0-3-1.3-3-3s1.3-3 3-3c.3-1.7 1.8-3 3.5-3 1.1 0 2 .5 2.7 1.2A3.5 3.5 0 0 1 18 8c1.7 0 3 1.3 3 3s-1.3 3-3 3"/><path d="M6 14h12v2a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3z"/><path d="M9 19v2M15 19v2"/></svg>Стадо</button>
-  <button data-tab="pens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-6 9 6"/><path d="M5 9v11h14V9"/><path d="M9 20v-6h6v6"/><path d="M12 14v6"/></svg>Загоны</button>
+  <button data-tab="home" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/></svg>Главная</button>
+  <button data-tab="herd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 14c-1.7 0-3-1.3-3-3s1.3-3 3-3c.3-1.7 1.8-3 3.5-3 1.1 0 2 .5 2.7 1.2A3.5 3.5 0 0 1 18 8c1.7 0 3 1.3 3 3s-1.3 3-3 3"/><path d="M6 14h12v2a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3z"/><path d="M9 19v2M15 19v2"/></svg>Стадо</button>
   <button data-tab="milk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6M10 2v3l-3 4v11a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9l-3-4V2"/><path d="M7 13h10"/></svg>Молоко</button>
   <button data-tab="stock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l9-5 9 5v12H3z"/><path d="M7 20v-8h10v8"/><path d="M7 15h10"/></svg>Склад</button>
   <button data-tab="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>Ещё<span class="badge" id="moreBadge" hidden></span></button>
