@@ -14,7 +14,7 @@ const PENS = BARNS.flatMap(b => Array.from({length:b.pens}, (_, i) => [
 ]).flat());
 const PEN = Object.fromEntries(PENS.map(p => [p.id, p]));
 const PEN_ORDER = Object.fromEntries(PENS.map((p, i) => [p.id, i]));
-const penShort = id => PEN[id] ? `${PEN[id].barn.short}·${PEN[id].n}` : '';
+const penShort = id => PEN[id] ? `${PEN[id].barn.name}, загон ${PEN[id].n}` : '';
 const penLong = id => PEN[id] ? `${PEN[id].barn.name}, загон ${PEN[id].n}` : 'Без загона';
 const penLabel = id => (S.pens.find(p => p.id===id)?.label || '').trim();
 
@@ -231,7 +231,7 @@ function docTitle(col, d){
     case 'items': return `${d.cat==='vehicle' ? 'Техника' : d.cat==='fuel' ? 'Топливо' : d.cat==='vet' ? 'Препарат' : 'Корм'}: ${d.name || ''}`;
     case 'rations': return `Рацион «${d.name || ''}»`;
     case 'pens': return penLong(d.id || '');
-    case 'settings': return d.id === 'people' || d.names ? 'Имена пользователей' : 'Настройки';
+    case 'settings': return d.id === 'people' || d.names ? 'Имена пользователей' : d.text != null ? 'Рационы в табеле кормления' : 'Настройки';
     case 'feedauto': return `Списание кормов за ${d.date ? fmtShort(d.date) : ''}`;
   }
   return col;
@@ -474,7 +474,7 @@ function render(){
   $('#fab').hidden = !['herd','milk','stock','plan','money'].includes(S.tab) || (S.tab==='herd' && S.herdMode==='pens');
   let html = '';
   if(S.demo) html += `<div class="banner">Демо-режим: всё хранится только в этом браузере.${S.animals.some(a => a.demo) ? ` Сейчас открыт пример хозяйства. <button class="link adm" data-act="clear-demo">Очистить пример</button>` : ''}</div>`;
-  html += ({log:logView, people:peopleView, home:homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
+  html += ({log:logView, people:peopleView, feedsheet:feedSheetView, home:homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
   const focus = document.activeElement?.id, pos = document.activeElement?.selectionStart;
   v.innerHTML = html;
   bindView();
@@ -643,7 +643,7 @@ function herdView(){
     return `<button class="row ${a.status!=='active'?'gone':''}" data-open="${a.id}">
       <span class="tag">${esc(a.tag)}</span>
       <span class="main"><div class="name">${esc(animalTitle(a))} ${sexIcon(a.sex)}</div>
-      <div class="sub">${[penShort(a.pen) ? `загон ${penShort(a.pen)}` : '', g ? groupName(a.species, g) : (a.cat ? a.cat + ' (без группы)' : 'без группы'), a.breed, age(a.birth)].filter(Boolean).map(esc).join(' · ')}</div></span>
+      <div class="sub">${[penShort(a.pen), g ? groupName(a.species, g) : (a.cat ? a.cat + ' (без группы)' : 'без группы'), a.breed, age(a.birth)].filter(Boolean).map(esc).join(' · ')}</div></span>
       <span class="side">${w?`<strong>${num(w)} кг</strong>`:''}${a.status!=='active'?`<span class="pill">${STATUS[a.status]}</span>`:''}</span></button>`;
   }).join('') + `</div>`;
 }
@@ -890,6 +890,7 @@ function moreView(){
     <button class="row adm" data-tab-go="people" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Пользователи и имена</div><div class="sub">Чтобы в записях было видно, кто внёс</div></span><span class="side">›</span></button>
     <button class="row adm" data-tab-go="log" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Журнал изменений</div><div class="sub">Кто, когда и что внёс, изменил или удалил</div></span><span class="side">›</span></button>
     <button class="row adm" data-act="import" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Загрузка из Excel</div><div class="sub">Список животных по загонам из вашей таблицы</div></span><span class="side">›</span></button>
+    <button class="row" data-tab-go="feedsheet" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Табель кормления</div><div class="sub">Бланк по загонам — скачать в Excel и распечатать</div></span><span class="side">›</span></button>
     <button class="row" data-act="excel" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Выгрузка в Excel</div><div class="sub">Стадо, окоты, корма, ГСМ, молоко, финансы за период</div></span><span class="side">›</span></button></div>`;
   h += `<div class="panel"><div class="eyebrow">Резервная копия</div><p class="muted">Файл со всеми записями. Сохраняйте его раз в месяц.</p><div class="actions"><button class="btn" data-act="backup">Сохранить копию</button></div></div>`;
   if(S.local && !S.demo) h += `<div class="banner">Записи хранятся только на этом устройстве. Чтобы вести учёт вместе, настройте синхронизацию по инструкции README.</div>`;
@@ -982,7 +983,7 @@ function bindView(){
   const v = $('#view'), on = (sel, fn) => v.querySelectorAll(sel).forEach(b => b.onclick = () => fn(b));
   const q = $('#q'); if(q) q.oninput = () => { S.q = q.value; render(); };
   const lw = $('#lg-who'); if(lw) lw.onchange = () => { logWho = lw.value; render(); };
-  bindPeople();
+  bindPeople(); bindFeedSheet();
   on('[data-f]', b => { S.filter = b.dataset.f; if(!S.filter) S.q = ''; window.scrollTo(0,0); render(); });
   on('[data-hm]', b => { S.herdMode = b.dataset.hm; window.scrollTo(0,0); render(); });
   on('[data-nav]', b => { if(b.dataset.f2 != null) S.filter = b.dataset.f2; if(b.dataset.hm2) S.herdMode = b.dataset.hm2; S.tab = b.dataset.nav; window.scrollTo(0,0); render(); });
@@ -1271,7 +1272,7 @@ function eventForm(e){
       const mom = byId(ids[0]); const n = Math.max(0, Math.min(8, parseInt(f.querySelector('#e-count').value) || 0));
       const ks = f.querySelector('#e-ksire'); if(!ks.dataset.touched){ ks.value = lastSire(mom.id, f.querySelector('#e-date').value || today()); }
       const prev = [...kidsBox.querySelectorAll('.kidrow')].map(r => ({tag:r.querySelector('[data-k=tag]').value, sex:r.querySelector('input[type=radio]:checked')?.value, w:r.querySelector('[data-k=w]').value}));
-      kidsBox.innerHTML = n ? `<div class="eyebrow">${mom.species==='goat'?'Козлята':'Ягнята'} · мать ${esc(animalLabel(mom))}, загон ${esc(penShort(mom.pen)||'—')}</div>` + Array.from({length:n}, (_,i) => {
+      kidsBox.innerHTML = n ? `<div class="eyebrow">${mom.species==='goat'?'Козлята':'Ягнята'} · мать ${esc(animalLabel(mom))}, ${esc(penShort(mom.pen)||'без загона')}</div>` + Array.from({length:n}, (_,i) => {
         const p = prev[i] || {}; const sx = p.sex || 'f';
         return `<div class="kidrow"><span class="kn">${i+1}</span>
           <input data-k="tag" aria-label="Номер бирки детёныша ${i+1}" placeholder="${esc(mom.tag)}-${i+1}" value="${esc(p.tag||'')}" autocomplete="off">
@@ -1884,9 +1885,9 @@ const XL = (() => {
 <numFmts count="3"><numFmt numFmtId="164" formatCode="#,##0.0##"/><numFmt numFmtId="165" formatCode="#,##0&quot; ₽&quot;"/><numFmt numFmtId="166" formatCode="dd.mm.yyyy"/></numFmts>
 <fonts count="4"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><name val="Calibri"/></font></fonts>
 <fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF2D6748"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE3E8DF"/></patternFill></fill></fills>
-<borders count="2"><border/><border><top style="thin"><color rgb="FF9AA89E"/></top></border></borders>
+<borders count="3"><border/><border><top style="thin"><color rgb="FF9AA89E"/></top></border><border><left style="thin"><color rgb="FF000000"/></left><right style="thin"><color rgb="FF000000"/></right><top style="thin"><color rgb="FF000000"/></top><bottom style="thin"><color rgb="FF000000"/></bottom></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="12">
+<cellXfs count="16">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
 <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment vertical="top"/></xf>
@@ -1899,6 +1900,10 @@ const XL = (() => {
 <xf numFmtId="3" fontId="2" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top"/></xf>
 <xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="top"/></xf>
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top"/></xf>
+<xf numFmtId="0" fontId="2" fillId="3" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="2" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="2" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
@@ -1908,7 +1913,27 @@ const XL = (() => {
     if((t === 'n' || t === 'm' || t === 'i') && typeof v === 'number' && isFinite(v)) return `<c r="${ref}" s="${st}"><v>${v}</v></c>`;
     return `<c r="${ref}" s="${t === 'd' || t === 'n' || t === 'm' || t === 'i' ? (st >= 6 ? 6 : 0) : st}" t="inlineStr"><is><t xml:space="preserve">${x(v)}</t></is></c>`;
   }
+  // «Свободный» лист: ячейки по адресам, объединения, рамки — для печатных бланков
+  function rawSheetXml(sh){
+    const byRow = {};
+    for(const [ref, [v, st]] of Object.entries(sh.cells)){ const r = +ref.replace(/^[A-Z]+/, ''); (byRow[r] ||= []).push([ref, v, st]); }
+    const colN = ref => { let c = 0; for(const ch of ref.replace(/\d+/g, '')) c = c * 26 + ch.charCodeAt(0) - 64; return c; };
+    const rows = Object.keys(byRow).map(Number).sort((a, b) => a - b).map(r => `<row r="${r}"${sh.heights?.[r] ? ` ht="${sh.heights[r]}" customHeight="1"` : ''}>${byRow[r].sort((a, b) => colN(a[0]) - colN(b[0])).map(([ref, v, st]) =>
+      v === '' || v == null ? `<c r="${ref}" s="${st}"/>` : typeof v === 'number' ? `<c r="${ref}" s="${st}"><v>${v}</v></c>` : `<c r="${ref}" s="${st}" t="inlineStr"><is><t xml:space="preserve">${x(v)}</t></is></c>`).join('')}</row>`);
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>
+<sheetFormatPr defaultRowHeight="15"/>
+<cols>${sh.widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>
+<sheetData>${rows.join('')}</sheetData>
+${sh.merges.length ? `<mergeCells count="${sh.merges.length}">${sh.merges.map(m => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : ''}
+<printOptions horizontalCentered="1"/>
+<pageMargins left="0.3" right="0.3" top="0.4" bottom="0.4" header="0.2" footer="0.2"/>
+<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="${sh.onePage ? 1 : 0}"/>
+</worksheet>`;
+  }
   function sheetXml(sh){
+    if(sh.raw) return rawSheetXml(sh);
     const cols = sh.cols, rows = [];
     let r = 1;
     rows.push(`<row r="${r}" ht="22" customHeight="1">${cell('A' + r, sh.title, 's', 10)}</row>`); r++;
@@ -1942,7 +1967,7 @@ ${sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" Co
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`},
       {name:'xl/workbook.xml', data:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>${names.map((n, i) => `<sheet name="${x(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets>
-<definedNames>${sheets.map((s, i) => s.rows.length ? `<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">'${x(names[i]).replace(/'/g, "''")}'!$A$${s.note ? 4 : 3}:$${colL(s.cols.length - 1)}$${(s.note ? 4 : 3) + s.rows.length}</definedName>` : '').join('')}</definedNames></workbook>`},
+<definedNames>${sheets.map((s, i) => !s.raw && s.rows.length ? `<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">'${x(names[i]).replace(/'/g, "''")}'!$A$${s.note ? 4 : 3}:$${colL(s.cols.length - 1)}$${(s.note ? 4 : 3) + s.rows.length}</definedName>` : '').join('')}</definedNames></workbook>`},
       {name:'xl/_rels/workbook.xml.rels', data:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`},
       {name:'xl/styles.xml', data:styles},
@@ -2151,6 +2176,98 @@ function excelSheet(only){
   }, 'xlform');
 }
 
+
+/* ===== Табель кормления (печатный бланк) ===== */
+const FEEDSHEET_DEFAULT = `Рацион №1 — дойные овцы, 0,200–0,220 кг/гол
+Кукуруза — 20%
+Овёс — 20%
+Пшеница — 8%
+К/к «Капелла» — 37%
+Шрот соевый — 15%
+Ячмень
+
+Рацион №2 — холостые: 0,150 кг/гол, перед случкой 0,180 кг/гол, откорм взрослых 0,200–0,220 кг/гол
+Овёс — 30%
+Пшеница — 18%
+Кукуруза — 12%
+К/к «Овисмикс» — 40%
+
+Рацион №3 — молодняк овец старше 4 мес: 0,150–0,180 кг/гол, откорм 0,200–0,250 кг/гол
+Кукуруза — 20%
+Овёс — 20%
+Ячмень — 20%
+К/к «Капелла» — 40%
+Шрот соевый — 0%
+
+Рацион №4 — молодняк 0–3 мес
+К/к «Салюс» — 40%
+Кукуруза — 26%
+Ячмень — 26%
+Фелуцен гранулы — 8%`;
+const feedSheetText = () => setting('feedsheet')?.text ?? FEEDSHEET_DEFAULT;
+function feedSheetView(){
+  let h = backTo('Табель кормления');
+  h += `<p class="muted" style="margin:0">Бланк для печати: слева рационы, справа все загоны по помещениям — сколько голов, номер рациона и пустая графа «корма на загон». Скачайте файл и распечатайте из Excel (лист уже настроен на альбомный A4).</p>
+    <form id="fsf" novalidate>
+      ${fld('fs-date','Дата в заголовке',`<input id="fs-date" type="date" value="${today()}">`)}
+      <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="fs-heads" checked><span>Подставить поголовье по загонам на сегодня</span></label>
+      <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="fs-rat" checked><span>Подставить № рациона по загонам (из списка животных)</span></label>
+      <p class="muted" style="margin:0">Без галочек и без даты получится пустой шаблон.</p>
+      <div class="actions"><button class="btn primary" type="submit">Скачать табель в Excel</button></div>
+      ${fld('fs-text', S.admin ? 'Рационы (пустая строка — следующий рацион, первая строка — название)' : 'Рационы', `<textarea id="fs-text" rows="16" ${S.admin ? '' : 'readonly'}>${esc(feedSheetText())}</textarea>`)}
+      ${S.admin ? `<div class="actions"><button class="btn" type="button" id="fs-save">Сохранить рационы</button><button class="btn" type="button" id="fs-reset">Как в файле от 1.07.2026</button></div>` : ''}
+    </form>`;
+  return h;
+}
+function bindFeedSheet(){
+  const f = $('#fsf'); if(!f) return;
+  const sv = $('#fs-save'); if(sv) sv.onclick = () => { store.set('settings', 'feedsheet', {text:$('#fs-text').value.trim()}); toast('Рационы сохранены'); };
+  const rs = $('#fs-reset'); if(rs) rs.onclick = () => { $('#fs-text').value = FEEDSHEET_DEFAULT; };
+  f.onsubmit = async ev => {
+    ev.preventDefault();
+    const date = $('#fs-date').value, sh = feedSheetBuild($('#fs-text').value, date, $('#fs-heads').checked, $('#fs-rat').checked);
+    if(await saveFile(`Табель кормления${date ? ' ' + date : ''}.xlsx`, XL.build([sh]))) toast('Табель сохранён в «Загрузки»');
+  };
+}
+function feedSheetBuild(text, date, withHeads, withRation){
+  const cells = {}, merges = [], heights = {1:26, 4:42};
+  const L = i => { let s = ''; i++; while(i){ const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = (i - m - 1) / 26; } return s; };
+  const put = (c, r, v, st) => { cells[L(c) + r] = [v, st]; };
+  const box = (c1, r1, c2, r2, v, st) => { for(let r = r1; r <= r2; r++) for(let c = c1; c <= c2; c++) put(c, r, r === r1 && c === c1 ? v : '', st); if(c1 !== c2 || r1 !== r2) merges.push(`${L(c1)}${r1}:${L(c2)}${r2}`); };
+  const nCols = 2 + BARNS.length * 4, last = nCols - 1;
+  box(0, 1, last, 1, `Табель кормления на ${date ? fmtD(date) : '«____» ______________ 20___ г.'}`, 10);
+  box(0, 2, last, 2, withHeads ? `Поголовье по загонам — по данным «Берегини» на ${fmtD(today())}` : 'Рационы и раздача корма по загонам', 11);
+  box(0, 3, 0, 4, 'Рацион: состав, %', 12); box(1, 3, 1, 4, 'Кг на 1 гол.', 12);
+  // рационы слева
+  const blocks = String(text || '').split(/\n\s*\n/).map(b => b.split('\n').map(x => x.trim()).filter(Boolean)).filter(b => b.length);
+  const left = []; blocks.forEach((b, i) => { if(i) left.push(['', 13]); left.push([b[0], 15]); b.slice(1).forEach(x => left.push([x, 13])); });
+  // загоны справа
+  const cols = BARNS.map((b, bi) => {
+    const c0 = 2 + bi * 4, pens = PENS.filter(p => p.barn === b);
+    box(c0, 3, c0 + 3, 3, b.name, 12);
+    ['Загон', 'Голов', 'Рацион №', 'Корма на загон, кг'].forEach((t, k) => put(c0 + k, 4, t, 12));
+    let tot = 0;
+    const rows = pens.filter(p => !(/^вместе с загоном/i.test(penLabel(p.id)) && !inPen(p.id).length)).map(p => {
+      const an = inPen(p.id), n = an.length; tot += n;
+      let num = p.n, lbl = penLabel(p.id); const mm = lbl.match(/^загоны\s*(\d+)\s*[–-]\s*(\d+)\s*:?\s*(.*)$/i); if(mm){ num = `${mm[1]}–${mm[2]}`; lbl = mm[3]; }
+      const cnt = {}; an.forEach(a => { const r = String(a.rationNo || '').replace(/[^\d]/g, ''); if(r) cnt[r] = (cnt[r] || 0) + 1; });
+      const rn = Object.entries(cnt).sort((x, y) => y[1] - x[1])[0]?.[0];
+      return [num + (lbl ? ' ' + lbl : ''), withHeads ? (n || '') : '', withRation && rn ? '№' + rn : '', ''];
+    });
+    rows.push(['Итого', withHeads ? tot : '', '', '']);
+    return {c0, rows};
+  });
+  const body = Math.max(left.length, ...cols.map(c => c.rows.length));
+  for(let i = 0; i < body; i++){
+    const r = 5 + i, lv = left[i];
+    put(0, r, lv ? lv[0] : '', lv ? lv[1] : 13); put(1, r, '', 14);
+    cols.forEach(({c0, rows}) => { const row = rows[i], isTot = row && row[0] === 'Итого'; for(let k = 0; k < 4; k++) put(c0 + k, r, row ? row[k] : '', isTot ? 15 : k === 0 ? 13 : 14); });
+  }
+  const fr = 5 + body + 1;
+  box(0, fr, last, fr, 'Корм выдал: ______________________   Корм принял: ______________________   Подпись: ______________', 11);
+  heights[fr] = 24;
+  return {name:'Табель кормления', raw:true, rows:[], cols:[], widths:[36, 8, ...BARNS.flatMap(() => [17, 6, 7, 10])], cells, merges, heights, onePage:true};
+}
 
 /* ===== Загрузка стада из Excel ===== */
 // Чтение .xlsx прямо в браузере: zip + XML, без внешних библиотек.
