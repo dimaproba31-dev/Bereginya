@@ -2310,8 +2310,167 @@ function applyImportPlan(plan, opt){
   return {created, updated, birthsMade, rationsMade};
 }
 
+/* ----- Загрузка журнала молока и склада кормов ----- */
+const xlNum = v => { if(v == null || v === '') return null; const n = typeof v === 'number' ? v : dec(String(v)); return isFinite(n) ? n : null; };
+const headerAt = (rows, re, maxRow = 10) => { for(let i = 0; i < Math.min(rows.length, maxRow); i++) if((rows[i] || []).some(v => re.test(norm(v)))) return i; return -1; };
+const colOf = (head, re) => head.findIndex(v => re.test(norm(v)));
+function fileKind(sheets){
+  const names = sheets.map(s => norm(s.name));
+  if(sheets.some(s => /молок/.test(norm(s.name)) && headerAt(s.rows, /утрен/) >= 0)) return 'milk';
+  if(names.includes('справочник') && (names.includes('приход') || names.includes('расход'))) return 'feed';
+  return 'herd';
+}
+// Журнал молока: листы «Козье молоко» / «Овечье молоко», столбцы Дата | Утренний | Вечерний | Выпойка | Забрано | Остаток
+function buildMilkPlan(sheets){
+  const sp = [], issues = [];
+  for(const sh of sheets){
+    const n = norm(sh.name), species = /коз/.test(n) ? 'goat' : /овеч|овц/.test(n) ? 'sheep' : null;
+    const hr = headerAt(sh.rows, /утрен/); if(!species || hr < 0) continue;
+    const h = sh.rows[hr], c = {date:colOf(h, /^дата/), am:colOf(h, /утрен/), pm:colOf(h, /вечер/), feed:colOf(h, /выпойк/), out:colOf(h, /забран|отгруж|сдан/), bal:colOf(h, /остат/), note:colOf(h, /примеч/)};
+    const days = []; let open = null, ya = 0, oa = 0;
+    for(let ri = hr + 1; ri < sh.rows.length; ri++){
+      const r = sh.rows[ri] || [], date = xlDate(r[c.date]); if(!date) continue;
+      const g = k => c[k] >= 0 ? xlNum(r[c[k]]) : null;
+      const d = {date, am:g('am'), pm:g('pm'), feed:g('feed'), out:g('out'), note:c.note >= 0 ? String(r[c.note] ?? '').trim() : ''};
+      if(d.am == null && d.pm == null && !d.feed && !d.out) continue;
+      days.push(d); ya += (d.am||0) + (d.pm||0); oa += (d.feed||0) + (d.out||0);
+      const bal = g('bal'); if(open == null && bal != null) open = round(bal - ya + oa, 2);
+      d.bal = bal;
+    }
+    if(!days.length) continue;
+    days.sort((a, b) => a.date.localeCompare(b.date));
+    const yieldSum = round(days.reduce((s, d) => s + (d.am||0) + (d.pm||0), 0), 2), outSum = round(days.reduce((s, d) => s + (d.out||0), 0), 2), feedSum = round(days.reduce((s, d) => s + (d.feed||0), 0), 2);
+    open = open != null && open > 0.05 ? open : 0;
+    const last = days.filter(d => d.bal != null).pop(), calc = round(open + yieldSum - outSum - feedSum, 2);
+    if(last && Math.abs(last.bal - calc) > 0.2) issues.push({level:'warn', where:sh.name, text:`По файлу в танке на ${fmtD(last.date)} — ${num(last.bal)} л, а по надоям и отгрузкам выходит ${num(calc)} л.`});
+    days.forEach(d => { for(const ss of ['am','pm']){ const m = milkDoc(d.date, ss, species); if(!m || d[ss] == null) continue;
+      const ph = Object.values(m.yields||{}).reduce((a, b) => a + (+b||0), 0), cur = milkTotal(m);
+      if(ph > d[ss] + 1e-9) issues.push({level:'warn', where:`${sh.name}, ${fmtD(d.date)}`, text:`${SESS[ss]}: в приложении по головам уже ${num(ph)} л, в файле ${num(d[ss])} л — эта дойка не меняется.`});
+      else if(Math.abs(cur - d[ss]) > 1e-9) issues.push({level:'info', where:`${sh.name}, ${fmtD(d.date)}`, text:`${SESS[ss]}: в приложении было ${num(cur)} л, станет ${num(d[ss])} л, как в файле.`}); } });
+    sp.push({species, sheet:sh.name, days, open, yieldSum, outSum, feedSum, end:calc, from:days[0].date, to:days[days.length-1].date});
+  }
+  return {sp, issues};
+}
+function applyMilkPlan(plan){
+  let docs = 0, outs = 0;
+  for(const s of plan.sp){
+    if(s.open > 0){ const d0 = addDays(s.from, -1), id = milkId(d0, 'am', s.species), m = milkDoc(d0, 'am', s.species);
+      if(!m || Math.abs(milkTotal(m) - s.open) > 1e-9){ store.merge('milk', id, {date:d0, session:'am', species:s.species, extra:s.open, note:'Остаток в танке на начало (из Excel)'}); docs++; } }
+    for(const d of s.days){
+      for(const ss of ['am','pm']){
+        if(d[ss] == null) continue;
+        const m = milkDoc(d.date, ss, s.species), ph = m ? Object.values(m.yields||{}).reduce((a, b) => a + (+b||0), 0) : 0;
+        if(ph > d[ss] + 1e-9 || (m && Math.abs(milkTotal(m) - d[ss]) < 1e-9)) continue;
+        store.merge('milk', milkId(d.date, ss, s.species), {date:d.date, session:ss, species:s.species, extra:round(d[ss] - ph, 2)}); docs++;
+      }
+      for(const [k, kind] of [['out','cheese'], ['feed','feed']]){
+        if(!(d[k] > 0)) continue;
+        const id = `xl-${s.species}-${d.date}-${kind}`, q = round(d[k], 2);
+        const dup = S.milkout.find(o => o.id === id || (o.species === s.species && o.date === d.date && o.kind === kind && Math.abs(+o.liters - q) < 1e-9));
+        if(dup) continue;
+        store.set('milkout', id, {species:s.species, kind, liters:q, date:d.date, to: kind === 'cheese' ? 'Сыроварня' : '', note:[d.note, 'из Excel'].filter(Boolean).join(' · '), byEmail:S.email||null}); outs++;
+      }
+    }
+  }
+  return {docs, outs};
+}
+// Склад кормов: листы «Справочник» (Код | Наименование | Ед. изм.), «Приход», «Расход», «Остатки»
+const feedKey = s => norm(s).replace(/^(к-к|комбикорм)\s*/, '').replace(/[^a-zа-я0-9]/g, '').replace(/(.)\1+/g, '$1');
+function buildFeedPlan(sheets){
+  const by = n => sheets.find(s => norm(s.name) === n), issues = [];
+  const dir = {}, sp = by('справочник');
+  if(sp){ const hr = Math.max(0, headerAt(sp.rows, /наимен/)), h = sp.rows[hr] || [], cc = colOf(h, /^код/), cn = colOf(h, /наимен/), cu = colOf(h, /ед/);
+    for(let ri = hr + 1; ri < sp.rows.length; ri++){ const r = sp.rows[ri] || [], code = String(r[cc] ?? '').trim(), name = String(r[cn] ?? '').trim();
+      if(code && name && name !== '0') dir[code] = {code, name, unit:String(r[cu] ?? '').trim() || 'кг'}; } }
+  const moves = [], keys = {};
+  for(const [sheet, kind] of [['приход','in'], ['расход','out']]){
+    const sh = by(sheet); if(!sh) continue;
+    const hr = Math.max(0, headerAt(sh.rows, /^дата/)), h = sh.rows[hr] || [];
+    const c = {date:colOf(h, /^дата/), code:colOf(h, /^код/), qty:colOf(h, /кол-?во|количеств/), unit:colOf(h, /^ед/), sup:colOf(h, /поставщ/), doc:colOf(h, /документ/), act:colOf(h, /акт|бригадир/), group:colOf(h, /групп/), note:colOf(h, /примеч/)};
+    for(let ri = hr + 1; ri < sh.rows.length; ri++){
+      const r = sh.rows[ri] || [], code = String(r[c.code] ?? '').trim(), qty = xlNum(r[c.qty]), date = xlDate(r[c.date]);
+      if(!code && qty == null) continue;
+      const where = `${sh.name}, строка ${ri + 1}`;
+      if(!dir[code]){ issues.push({level:'warn', where, text:`Код «${code}» не найден в справочнике — строка пропущена.`}); continue; }
+      if(!(qty > 0)){ if(qty !== 0) issues.push({level:'warn', where, text:'Не указано количество — строка пропущена.'}); continue; }
+      if(!date){ issues.push({level:'warn', where, text:'Не указана дата — строка пропущена.'}); continue; }
+      const t = v => c[v] >= 0 ? String(r[c[v]] ?? '').trim() : '';
+      const note = (kind === 'in' ? [t('sup'), t('doc') ? '№' + t('doc') : '', t('note')] : [t('group'), t('act'), t('note')]).filter(Boolean).join(' · ');
+      let k = `${kind}-${date}-${code}-${qty}`; keys[k] = (keys[k] || 0) + 1; k += '-' + keys[k];
+      moves.push({key:k.replace(/[^\w.-]/g, '_'), kind, code, qty:round(qty, 3), date, note});
+    }
+  }
+  // сопоставление с кормами в приложении
+  const items = Object.values(dir).map(d => {
+    const ex = S.items.find(i => i.cat === 'feed' && feedKey(i.name) === feedKey(d.name));
+    const used = ex && (S.moves.some(m => m.item === ex.id) || S.rations.some(r => (r.items||[]).some(x => x.item === ex.id)) || S.feedauto.some(f => f.items && f.items[ex.id]));
+    let mode = 'new';
+    if(ex) mode = norm(ex.unit) === norm(d.unit) ? 'same' : used ? 'newunit' : 'relabel';
+    return {...d, ex, mode, inQ:0, outQ:0};
+  });
+  const byCode = Object.fromEntries(items.map(i => [i.code, i]));
+  moves.forEach(m => { const it = byCode[m.code]; if(m.kind === 'in') it.inQ += m.qty; else it.outQ += m.qty; m.dup = S.moves.some(x => x.id === 'xl-' + m.key); });
+  items.forEach(i => { if(i.mode === 'newunit') issues.push({level:'warn', where:i.name, text:`В приложении «${i.ex.name}» ведётся в «${i.ex.unit}», а в файле — в «${i.unit}». Будет заведён отдельный корм «${i.name} (${i.unit})».`}); });
+  const os = by('остатки');
+  if(os){ const hr = Math.max(0, headerAt(os.rows, /остат/)), h = os.rows[hr] || [], cc = colOf(h, /^код/), cb = colOf(h, /^остат/);
+    for(let ri = hr + 1; ri < os.rows.length; ri++){ const r = os.rows[ri] || [], it = byCode[String(r[cc] ?? '').trim()], b = xlNum(r[cb]);
+      if(it && b != null && Math.abs(b - (it.inQ - it.outQ)) > 0.01) issues.push({level:'warn', where:`Остатки, ${it.name}`, text:`В листе «Остатки» ${num(b)} ${it.unit}, а по приходу и расходу выходит ${num(it.inQ - it.outQ)} ${it.unit}. Загрузится ${num(it.inQ - it.outQ)} — проверьте, не пропущена ли строка.`}); } }
+  const dates = moves.filter(m => m.kind === 'out').map(m => m.date).sort(), from = dates[0], to = dates[dates.length - 1];
+  const autoDays = from ? S.feedauto.filter(f => !f.skipped && f.date >= from && f.date <= to && Object.keys(f.items||{}).length).map(f => f.date).sort() : [];
+  if(autoDays.length) issues.push({level:'warn', where:'Автосписание', text:`За ${autoDays.map(fmtShort).join(', ')} приложение уже списало корма по рационам, а в файле есть расход за эти же дни. Если это один и тот же корм, отмените автосписание за эти дни в «Склад → Журнал списаний».`});
+  return {items: items.filter(i => i.inQ || i.outQ || i.mode === 'new'), moves, issues};
+}
+function applyFeedPlan(plan){
+  const idOf = {}; let made = 0, n = 0;
+  plan.items.forEach(i => {
+    if(i.mode === 'same') idOf[i.code] = i.ex.id;
+    else if(i.mode === 'relabel'){ store.merge('items', i.ex.id, {unit:i.unit}); idOf[i.code] = i.ex.id; }
+    else { const id = S.be.newId('items'); store.set('items', id, {name: i.mode === 'newunit' ? `${i.name} (${i.unit})` : i.name, unit:i.unit, cat:'feed', code:i.code, byEmail:S.email||null}); idOf[i.code] = id; made++; }
+  });
+  plan.moves.forEach(m => { if(m.dup || !idOf[m.code]) return; store.set('moves', 'xl-' + m.key, {item:idOf[m.code], kind:m.kind, qty:m.qty, date:m.date, note:m.note || (m.kind === 'in' ? 'из Excel' : ''), source:'excel', byEmail:S.email||null}); n++; });
+  return {made, n};
+}
+const issuesHtml = issues => { const w = issues.filter(i => i.level === 'warn'), f = issues.filter(i => i.level !== 'warn');
+  return (w.length ? `<details class="issues" open><summary>Проверьте: ${w.length}</summary><ul>${w.map(i => `<li><b>${esc(i.where)}</b> — ${esc(i.text)}</li>`).join('')}</ul></details>` : '')
+    + (f.length ? `<details class="issues info"><summary>Замечания: ${f.length}</summary><ul>${f.map(i => `<li><b>${esc(i.where)}</b> — ${esc(i.text)}</li>`).join('')}</ul></details>` : ''); };
+function milkImportView(res, plan, fname){
+  if(!plan.sp.length){ res.innerHTML = `<p class="err">Не нашлось листов «Козье молоко» / «Овечье молоко» со столбцами «Утренний надой» и «Вечерний надой».</p>`; return; }
+  res.innerHTML = plan.sp.map(s => `<div class="panel"><div class="eyebrow">${MILKNAME[s.species]} молоко · ${fmtShort(s.from)} – ${fmtShort(s.to)}</div>
+      <div class="kv"><span>Дней</span><strong>${s.days.length}</strong></div>
+      ${s.open ? `<div class="kv"><span>В танке на начало</span><strong>${num(s.open)} л</strong></div>` : ''}
+      <div class="kv"><span>Надоено</span><strong>${num(s.yieldSum)} л</strong></div>
+      <div class="kv"><span>Отгружено на сыроварню</span><strong>−${num(s.outSum)} л</strong></div>
+      ${s.feedSum ? `<div class="kv"><span>Выпойка молодняку</span><strong>−${num(s.feedSum)} л</strong></div>` : ''}
+      <div class="kv total"><span>Остаток на ${fmtShort(s.to)}</span><strong>${num(s.end)} л</strong></div></div>`).join('')
+    + issuesHtml(plan.issues)
+    + `<p class="muted" style="margin:0">Надои записываются общими литрами за утро и вечер. Повторная загрузка того же файла ничего не задвоит.</p>
+    <div class="actions"><button class="btn primary" id="imgo">Загрузить молоко</button></div>`;
+  res.querySelector('#imgo').onclick = () => {
+    const b = res.querySelector('#imgo'); b.disabled = true; b.textContent = 'Загружаем…';
+    const r = silently(() => applyMilkPlan(plan));
+    journalNote(`Загрузка молока из Excel «${fname}»: доек ${r.docs}, отгрузок ${r.outs}`);
+    toast(`Молоко загружено: доек ${r.docs}, отгрузок ${r.outs}`); closeSheet(); S.milkDate = plan.sp[0].to; go('milk');
+  };
+}
+function feedImportView(res, plan, fname){
+  if(!plan.moves.length){ res.innerHTML = `<p class="err">Не нашлось строк прихода или расхода. Нужны листы «Справочник», «Приход», «Расход».</p>` + issuesHtml(plan.issues); return; }
+  const nNew = plan.moves.filter(m => !m.dup).length, mode = {same:'уже есть', relabel:'есть, ед. изм. поменяется', newunit:'новый', new:'новый'};
+  res.innerHTML = `<div class="stats"><div class="stat"><div class="v">${plan.moves.filter(m => m.kind === 'in').length} / ${plan.moves.filter(m => m.kind === 'out').length}</div><div class="l">строк прихода / расхода${nNew < plan.moves.length ? ` · ${plan.moves.length - nNew} уже загружены` : ''}</div></div>
+      <div class="stat"><div class="v">${plan.items.length}</div><div class="l">кормов</div></div></div>
+    <div class="panel"><div class="eyebrow">Остаток после загрузки</div>${plan.items.map(i => `<div class="kv"><span>${esc(i.name)} <span class="muted">· ${mode[i.mode]}</span></span><strong>${num(round(i.inQ - i.outQ, 2))} ${esc(i.unit)}</strong></div>`).join('')}</div>
+    ${issuesHtml(plan.issues)}
+    <div class="actions"><button class="btn primary" id="imgo" ${nNew ? '' : 'disabled'}>${nNew ? `Загрузить ${nNew} ${plural(nNew, 'запись', 'записи', 'записей')}` : 'Всё уже загружено'}</button></div>`;
+  res.querySelector('#imgo').onclick = () => {
+    const b = res.querySelector('#imgo'); b.disabled = true; b.textContent = 'Загружаем…';
+    const r = silently(() => applyFeedPlan(plan));
+    journalNote(`Загрузка склада кормов из Excel «${fname}»: операций ${r.n}, новых кормов ${r.made}`);
+    toast(`Склад загружен: операций ${r.n}${r.made ? `, новых кормов ${r.made}` : ''}`); closeSheet(); S.stockCat = 'feed'; go('stock');
+  };
+}
+
 function importSheet(){
-  const body = `<p class="muted" style="margin:0">Выберите файл Excel (.xlsx) со списком животных. Приложение само найдёт столбцы «№ бирки», «Категория», «Пол», «Дата рождения», «Примечание», «Рацион» и строки «Загон № …». Листы называйте как помещения: «Овчарня 1», «Овчарня 2», «Козлятник»; раздел «Карантин» можно вести внутри листа.</p>
+  const body = `<p class="muted" style="margin:0">Можно загрузить три вида файлов: список животных, журнал молока (листы «Козье молоко», «Овечье молоко») и склад кормов (листы «Справочник», «Приход», «Расход»). Приложение само поймёт, что за файл.</p>
+    <p class="muted" style="margin:0">Для списка животных приложение само найдёт столбцы «№ бирки», «Категория», «Пол», «Дата рождения», «Примечание», «Рацион» и строки «Загон № …». Листы называйте как помещения: «Овчарня 1», «Овчарня 2», «Козлятник»; раздел «Карантин» можно вести внутри листа.</p>
     <label class="btn primary filebtn"><input type="file" id="imf" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">Выбрать файл</label>
     <div id="imres"></div>`;
   openSheet('Загрузка из Excel', body, s => {
@@ -2322,7 +2481,10 @@ function importSheet(){
       let plan;
       try{
         if(!/\.xlsx$/i.test(f.name)) throw new Error('ext');
-        plan = buildImportPlan(await readXlsx(await f.arrayBuffer()));
+        const sheets = await readXlsx(await f.arrayBuffer()), kind = fileKind(sheets);
+        if(kind === 'milk') return milkImportView(res, buildMilkPlan(sheets), f.name);
+        if(kind === 'feed') return feedImportView(res, buildFeedPlan(sheets), f.name);
+        plan = buildImportPlan(sheets);
       }catch(e){
         res.innerHTML = `<p class="err">${e.message === 'ext' || e.message === 'not_xlsx' ? 'Это не файл .xlsx. Откройте его в Excel и сохраните как «Книга Excel (.xlsx)».' : 'Не удалось прочитать файл: ' + esc(e.message || 'ошибка')}</p>`;
         return;
