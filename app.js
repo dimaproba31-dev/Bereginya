@@ -2207,19 +2207,28 @@ const FEEDSHEET_DEFAULT = `Рацион №1 — дойные овцы, 0,200–
 const feedSheetText = () => setting('feedsheet')?.text ?? FEEDSHEET_DEFAULT;
 function feedSheetView(){
   let h = backTo('Табель кормления');
-  h += `<p class="muted" style="margin:0">Бланк для печати: слева рационы, справа все загоны по помещениям — сколько голов, номер рациона и пустая графа «корма на загон». Скачайте файл и распечатайте из Excel (лист уже настроен на альбомный A4).</p>
-    <form id="fsf" novalidate>
-      ${fld('fs-date','Дата в заголовке',`<input id="fs-date" type="date" value="${today()}">`)}
-      <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="fs-heads" checked><span>Подставить поголовье по загонам на сегодня</span></label>
-      <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="fs-rat" checked><span>Подставить № рациона по загонам (из списка животных)</span></label>
-      <p class="muted" style="margin:0">Без галочек и без даты получится пустой шаблон.</p>
-      <div class="actions"><button class="btn primary" type="submit">Скачать табель в Excel</button></div>
-      ${fld('fs-text', S.admin ? 'Рационы (пустая строка — следующий рацион, первая строка — название)' : 'Рационы', `<textarea id="fs-text" rows="16" ${S.admin ? '' : 'readonly'}>${esc(feedSheetText())}</textarea>`)}
-      ${S.admin ? `<div class="actions"><button class="btn" type="button" id="fs-save">Сохранить рационы</button><button class="btn" type="button" id="fs-reset">Как в файле от 1.07.2026</button></div>` : ''}
-    </form>`;
+  h += `<p class="muted" style="margin:0">Ваш бланк «Рационы для овец с 1.07.2026» — точно такой же файл, как в Excel: рационы, Корпус 1 (старый), Корпус 2 (новый), Загоны (улица). Скачайте и распечатайте — лист уже настроен на альбомный A4.</p>
+    <div class="actions"><button class="btn primary" id="fs-orig">Скачать табель в Excel</button></div>
+    <details class="panel"><summary class="eyebrow">Другой вариант: табель с поголовьем по загонам</summary>
+      <form id="fsf" novalidate>
+        <p class="muted" style="margin:0">Собирается из данных приложения: Овчарня 1, Овчарня 2, Козлятник, Карантин — сколько голов и номер рациона в каждом загоне.</p>
+        ${fld('fs-date','Дата в заголовке',`<input id="fs-date" type="date" value="${today()}">`)}
+        <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="fs-heads" checked><span>Подставить поголовье</span></label>
+        <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="fs-rat" checked><span>Подставить № рациона</span></label>
+        <div class="actions"><button class="btn" type="submit">Скачать табель с поголовьем</button></div>
+        ${fld('fs-text', S.admin ? 'Рационы для этого варианта (пустая строка — следующий рацион)' : 'Рационы', `<textarea id="fs-text" rows="12" ${S.admin ? '' : 'readonly'}>${esc(feedSheetText())}</textarea>`)}
+        ${S.admin ? `<div class="actions"><button class="btn" type="button" id="fs-save">Сохранить рационы</button><button class="btn" type="button" id="fs-reset">Как в файле</button></div>` : ''}
+      </form></details>`;
   return h;
 }
 function bindFeedSheet(){
+  const og = $('#fs-orig');
+  if(og) og.onclick = async () => {
+    og.disabled = true;
+    try{ const r = await fetch('tabel.xlsx'); if(!r.ok) throw 0; if(await saveFile('Табель кормления.xlsx', await r.blob())) toast('Табель сохранён в «Загрузки»'); }
+    catch(_){ toast('Не удалось открыть бланк. Откройте приложение с интернетом и попробуйте ещё раз.'); }
+    og.disabled = false;
+  };
   const f = $('#fsf'); if(!f) return;
   const sv = $('#fs-save'); if(sv) sv.onclick = () => { store.set('settings', 'feedsheet', {text:$('#fs-text').value.trim()}); toast('Рационы сохранены'); };
   const rs = $('#fs-reset'); if(rs) rs.onclick = () => { $('#fs-text').value = FEEDSHEET_DEFAULT; };
