@@ -37,11 +37,16 @@ const CAT = {
 const SESS = {am:'Утро', pm:'Вечер'};
 const CATEGORIES = ['Дойная','Суягная','Сукозная','Холостая','Подсосная','Ярка','Молодняк','Ягнёнок','Козлёнок','Баран-производитель','Козёл-производитель','Баран-кастрат','Козёл-кастрат','Больная','Декоративная'];
 const MILKOUT = {cheese:'На сыроварню', sale:'Продажа', feed:'Выпойка молодняку', waste:'Брак / списание'};
-const UNITS = ['кг','т','ц','тюк','л','шт'];
-const STOCK = {feed:'Корма', fuel:'ГСМ'};
+const UNITS = ['кг','т','ц','рулон','тюк','мешок','л','мл','шт','фл','уп','доза','амп'];
+const STOCK = {feed:'Корма', fuel:'ГСМ', vet:'Аптека', tech:'Техника'};
+const STOCK_FULL = {feed:'Корма', fuel:'ГСМ', vet:'Ветеринарная аптека', tech:'Склад техники'};
+const ITEM_WORD = {feed:{one:'Корм', many:'Корма', add:'Корм'}, fuel:{one:'Топливо', many:'Топливо', add:'Топливо'}, vet:{one:'Препарат', many:'Препараты', add:'Препарат'}};
+const FIN_CAT = {feed:'Корма', fuel:'ГСМ', vet:'Ветеринария'};
+const EMPTY_TEXT = {feed:'Добавьте корма, которые храните: сено, зерно, комбикорм, ЗЦМ. Потом вносите приход и расход.', fuel:'Добавьте виды топлива: дизель, бензин, масло. Потом вносите приход и заправки техники.', vet:'Добавьте препараты, вакцины и расходники аптеки. Потом вносите приход и расход.'};
 const DEFAULT_ITEMS = {
-  feed:[['Сено','кг'],['Солома','кг'],['Ячмень','кг'],['Овёс','кг'],['Комбикорм','кг'],['Соль-лизунец','кг']],
-  fuel:[['Бензин АИ-92','л'],['Бензин АИ-95','л'],['Дизельное топливо','л']]
+  feed:[['Сено','рулон'],['Солома','рулон'],['Ячмень','кг'],['Пшеница','кг'],['Кукуруза','кг'],['Овёс','кг'],['Комбикорм','кг'],['ЗЦМ','кг'],['Соль-лизунец','кг']],
+  fuel:[['Бензин АИ-92','л'],['Бензин АИ-95','л'],['Дизельное топливо','л'],['Моторное масло','л']],
+  vet:[]
 };
 const COLS = ['animals','events','finance','items','moves','rations','pens','feedauto','milk','milkout','settings'];
 
@@ -194,7 +199,7 @@ const FIELD = {tag:'бирка', name:'кличка', species:'вид', sex:'п�
   motherId:'мать', fatherId:'отец', note:'заметка', outDate:'дата выбытия', since:'в загоне с', type:'событие', date:'дата', drug:'препарат', dose:'доза',
   nextDate:'повтор', doneNext:'повтор сделан', weight:'вес', sireId:'производитель', count:'приплод', animalIds:'животные', kind:'тип', qty:'количество',
   item:'позиция', vehicle:'транспорт', price:'сумма', amount:'сумма', category:'статья', liters:'литры', to:'получатель', extra:'общий надой', session:'дойка',
-  label:'назначение', ration:'рацион', items:'состав', mode:'норма', unit:'единица', plate:'госномер', paused:'пауза', from:'с даты', skipped:'не списывать', locked:'исправлено вручную'};
+  label:'назначение', ration:'рацион', items:'состав', mode:'норма', unit:'единица', plate:'госномер', trailer:'номер прицепа', vtype:'тип техники', gsm:'в ГСМ', who:'кто заправлял / выдал', expiry:'годен до', paused:'пауза', from:'с даты', skipped:'не списывать', locked:'исправлено вручную'};
 function fmtVal(k, v, d){
   if(v===undefined || v===null || v==='' || v===DEL) return '—';
   if(k==='pen') return penShort(v) || '—';
@@ -223,7 +228,7 @@ function docTitle(col, d){
     case 'milkout': return `${MILKOUT[d.kind] || 'Отгрузка молока'}: ${MILKNAME[d.species]?.toLowerCase()||''} ${num(d.liters)} л`;
     case 'moves': { const it = itemById(d.item); return `${d.kind==='in' ? 'Приход' : 'Расход'}: ${it?.name || '?'} ${num(d.qty)} ${it?.unit || ''}${d.vehicle ? ' → ' + (itemById(d.vehicle)?.name || '') : ''}`; }
     case 'finance': return `${d.kind==='income' ? 'Доход' : 'Расход'}: ${d.category || ''} ${money(+d.amount||0)}`;
-    case 'items': return `${d.cat==='vehicle' ? 'Транспорт' : d.cat==='fuel' ? 'Топливо' : 'Корм'}: ${d.name || ''}`;
+    case 'items': return `${d.cat==='vehicle' ? 'Техника' : d.cat==='fuel' ? 'Топливо' : d.cat==='vet' ? 'Препарат' : 'Корм'}: ${d.name || ''}`;
     case 'rations': return `Рацион «${d.name || ''}»`;
     case 'pens': return penLong(d.id || '');
     case 'settings': return 'Настройки списания кормов';
@@ -748,70 +753,95 @@ function milkChart(end, sp){
 
 /* ----- Склад ----- */
 function stockView(){
-  const cat = S.stockCat;
+  const cat = STOCK[S.stockCat] ? S.stockCat : 'feed';
   let h = `<div class="segb" role="group" aria-label="Раздел склада">${Object.entries(STOCK).map(([k,l]) => `<button data-cat="${k}" aria-pressed="${cat===k}">${l}</button>`).join('')}</div>`;
-  if(loading('items','moves','feedauto')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
-  if(cat==='fuel') return h + fuelView();
-  const items = S.items.filter(i => i.cat===cat).sort((a,b) => a.name.localeCompare(b.name,'ru'));
-  if(!items.length) return h + `<div class="empty"><h2>${cat==='feed'?'Корма':'Топливо и масла'} не добавлены</h2>
-    <p>${cat==='feed' ? 'Добавьте корма, которые храните: сено, зерно, комбикорм. Потом вносите приход и расход.' : 'Добавьте виды топлива: дизель, бензин, масло. Потом вносите заправки и выдачу на технику.'}</p>
-    <div class="actions"><button class="btn primary adm" data-act="seed-items">Добавить типовой список</button><button class="btn adm" data-act="add-item">Своя позиция</button></div></div>`;
-  const bal = stockBalance(), {use} = feedUse();
-  h += `<div class="actions"><button class="btn primary" data-mv="in">Приход</button><button class="btn" data-mv="out">${cat==='fuel'?'Выдача / расход':'Расход'}</button></div>`;
-  h += `<div class="list">` + items.map(it => {
-    const b = bal[it.id]||0, u = cat==='feed' ? use[it.id] : 0, days = u > 0 ? Math.floor(b/u) : null;
-    const pill = b < 0 ? `<span class="pill bad">минус</span>` : days!=null && days < 10 ? `<span class="pill ${days<4?'bad':'warn'}">на ${days} ${plural(days,'день','дня','дней')}</span>` : '';
-    return `<button class="row" data-item="${it.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(it.name)}</div>
-      <div class="sub">${u ? `расход ${num(u)} ${esc(it.unit)}/сут${days!=null && days>=10 ? ` · хватит на ${days} дн.` : ''}` : esc(it.unit)}</div></span>
-      <span class="side"><strong class="${b<0?'money minus':''}">${num(b)} ${esc(it.unit)}</strong>${pill}</span></button>`;
-  }).join('') + `</div><button class="link adm" data-act="add-item">+ Добавить позицию</button>`;
-  h += `<button class="link view-link" data-act="excel" data-sec="${cat}">Выгрузить ${cat==='feed'?'склад кормов':'ГСМ'} в Excel</button>`;
-  const hist = S.moves.filter(m => itemById(m.item)?.cat===cat).sort((a,b) => b.date.localeCompare(a.date) || (b.created||0)-(a.created||0)).slice(0, 30);
-  if(hist.length) h += `<div><div class="eyebrow">Последние операции</div></div><div class="list">` + hist.map(moveRow).join('') + `</div>`;
+  if(loading('items','moves')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
+  return h + (cat==='tech' ? techView() : stockCatView(cat));
+}
+const itemsOf = cat => S.items.filter(i => i.cat===cat).sort((a,b) => a.name.localeCompare(b.name,'ru'));
+const whoName = e => e ? String(e).split('@')[0] : '';
+const monthTitle = ym => { const s = parse(ym + '-01').toLocaleDateString('ru-RU', {month:'long', year:'numeric'}).replace(/\s*г\.?$/, ''); return s[0].toUpperCase() + s.slice(1); };
+function stockCatView(cat){
+  const items = itemsOf(cat), bal = stockBalance(), sub = S.stockSub || 'bal';
+  let h = `<div class="sechead"><h2>${STOCK_FULL[cat]}</h2><button class="btn small adm" data-act="add-item">+ ${ITEM_WORD[cat].add}</button></div>`;
+  if(!items.length) return h + `<div class="empty"><p>${EMPTY_TEXT[cat]}</p><div class="actions">${DEFAULT_ITEMS[cat]?.length ? `<button class="btn primary adm" data-act="seed-items">Добавить типовой список</button>` : ''}<button class="btn adm ${DEFAULT_ITEMS[cat]?.length ? '' : 'primary'}" data-act="add-item">+ ${ITEM_WORD[cat].add}</button></div></div>`;
+  h += `<div class="segb" role="group" aria-label="Что показать">${[['bal','Остаток'],['in','Приход'],['out','Расход']].map(([k,l]) => `<button data-sub="${k}" aria-pressed="${sub===k}">${l}</button>`).join('')}</div>`;
+  if(sub==='bal'){
+    const mon = today().slice(0,7);
+    h += `<div class="list">` + items.map(it => {
+      const b = bal[it.id]||0, usedM = S.moves.filter(m => m.item===it.id && m.kind==='out' && (m.date||'').startsWith(mon)).reduce((a,m) => a + (+m.qty||0), 0);
+      const exp = it.expiry ? daysBetween(today(), it.expiry) : null;
+      const sub2 = [usedM ? `расход за ${parse(mon+'-01').toLocaleDateString('ru-RU',{month:'long'})}: ${num(round(usedM,2))} ${it.unit}` : '', it.expiry ? `годен до ${fmtD(it.expiry)}` : ''].filter(Boolean).join(' · ') || it.unit;
+      const pill = b < 0 ? `<span class="pill bad">минус</span>` : b === 0 ? `<span class="pill warn">нет</span>` : exp != null && exp < 0 ? `<span class="pill bad">просрочен</span>` : exp != null && exp < 30 ? `<span class="pill warn">срок</span>` : '';
+      return `<button class="row" data-item="${it.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(it.name)}</div><div class="sub">${esc(sub2)}</div></span>
+        <span class="side"><strong class="${b<0?'money minus':''}">${num(b)} ${esc(it.unit)}</strong>${pill}</span></button>`;
+    }).join('') + `</div>`;
+  } else {
+    const kind = sub, f = S.stockFilter || '';
+    const ops = S.moves.filter(m => m.kind===kind && itemById(m.item)?.cat===cat && (!f || m.item===f || m.vehicle===f))
+      .sort((a,b) => b.date.localeCompare(a.date) || (b.created||0)-(a.created||0));
+    const vs = cat==='fuel' && kind==='out' ? vehicles().filter(v => S.moves.some(m => m.vehicle===v.id)) : [];
+    h += `<div class="actions"><button class="btn primary" data-mv="${kind}">+ ${kind==='in' ? 'Приход' : cat==='fuel' ? 'Заправка техники' : 'Расход'}</button></div>
+      <div class="field"><select id="sfilter" aria-label="Показать">${opt('', 'Все позиции', f)}${vs.length ? `<optgroup label="${ITEM_WORD[cat].many}">` : ''}${items.map(i => opt(i.id, i.name, f)).join('')}${vs.length ? `</optgroup><optgroup label="Техника">${vs.map(v => opt(v.id, vehLabel(v), f)).join('')}</optgroup>` : ''}</select></div>`;
+    if(!ops.length) h += `<div class="empty"><p>${kind==='in' ? 'Приходов пока нет.' : 'Расходов пока нет.'}</p></div>`;
+    else {
+      const fi = itemById(f);
+      if(fi && fi.cat===cat) h += `<div class="mbal"><div class="kv total"><span>Всего ${kind==='in' ? 'пришло' : 'израсходовано'}</span><strong>${num(round(ops.reduce((a,m) => a + (+m.qty||0), 0), 3))} ${esc(fi.unit)}</strong></div></div>`;
+      const byM = {}; ops.slice(0, 400).forEach(m => (byM[(m.date||'').slice(0,7)] ||= []).push(m));
+      h += Object.entries(byM).map(([ym, l]) => `<div><div class="eyebrow">${monthTitle(ym)} · ${l.length}</div></div><div class="list">${l.map(moveRow).join('')}</div>`).join('');
+    }
+  }
+  h += `<button class="link view-link" data-act="excel" data-sec="${cat}">Выгрузить «${STOCK_FULL[cat]}» в Excel</button>`;
   return h;
 }
+const VEH_TYPES = ['Трактор','Автомобиль','Грузовик','Погрузчик','Комбайн','Прицеп','Генератор','Другое'];
 const vehicles = () => S.items.filter(i => i.cat==='vehicle').sort((a,b) => a.name.localeCompare(b.name,'ru'));
+const gsmVehicles = () => vehicles().filter(v => v.gsm !== false);
 const vehLabel = v => v ? v.name + (v.plate ? ' · ' + v.plate : '') : '';
-function fuelView(){
-  const fuels = S.items.filter(i => i.cat==='fuel').sort((a,b) => a.name.localeCompare(b.name,'ru')), vs = vehicles(), bal = stockBalance();
-  const mon = today().slice(0,7), monLabel = parse(mon+'-01').toLocaleDateString('ru-RU',{month:'long'});
-  let h = `<div class="actions"><button class="btn primary" data-mv="in" ${fuels.length?'':'disabled'}>Приход</button><button class="btn" data-mv="out" ${fuels.length?'':'disabled'}>Выдача на технику</button></div>`;
-  h += `<div class="sechead"><h2>Топливо</h2><button class="btn small adm" data-act="add-fuel">+ Добавить</button></div>`;
-  h += fuels.length ? `<div class="list">` + fuels.map(it => { const b = bal[it.id]||0;
-    const used = S.moves.filter(m => m.item===it.id && m.kind==='out' && (m.date||'').startsWith(mon)).reduce((a,m) => a + (+m.qty||0), 0);
-    return `<button class="row" data-item="${it.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(it.name)}</div><div class="sub">${used ? `выдано за ${monLabel}: ${num(used)} ${esc(it.unit)}` : 'остаток на сегодня'}</div></span>
-      <span class="side"><strong class="${b<0?'money minus':''}">${num(b)} ${esc(it.unit)}</strong>${b<0?'<span class="pill bad">минус</span>':''}</span></button>`; }).join('') + `</div><p class="muted" style="margin:-8px 0 0">Нажмите на топливо, чтобы переименовать или удалить.</p>`
-    : `<div class="empty"><p>Добавьте виды топлива, которые используете.</p><div class="actions"><button class="btn primary adm" data-act="seed-items">Бензин 92, 95 и дизель</button><button class="btn adm" data-act="add-fuel">Своё</button></div></div>`;
-  h += `<div class="sechead"><h2>Транспорт</h2><button class="btn small adm" data-act="add-vehicle">+ Добавить транспорт</button></div>`;
-  h += vs.length ? `<div class="list">` + vs.map(v => {
+function techView(){
+  const vs = vehicles(), mon = today().slice(0,7), monLabel = parse(mon+'-01').toLocaleDateString('ru-RU',{month:'long'});
+  let h = `<div class="sechead"><h2>Склад техники</h2><button class="btn small adm" data-act="add-vehicle">+ Добавить технику</button></div>`;
+  if(!vs.length) return h + `<div class="empty"><p>Впишите всю технику хозяйства: трактора, машины, погрузчики, генераторы — с госномером и номером прицепа. Технику, отмеченную «в ГСМ», можно выбрать при заправке.</p><div class="actions"><button class="btn primary adm" data-act="add-vehicle">+ Добавить технику</button></div></div>`;
+  const off = vs.filter(v => v.gsm === false).length;
+  h += `<p class="muted" style="margin:0">Всего ${vs.length} ${plural(vs.length,'единица','единицы','единиц')} · в ГСМ ${vs.length - off}</p>`;
+  h += `<div class="list">` + vs.map(v => {
     const per = {}; S.moves.filter(m => m.vehicle===v.id && m.kind==='out' && (m.date||'').startsWith(mon)).forEach(m => per[m.item] = (per[m.item]||0) + (+m.qty||0));
     const parts = Object.entries(per).map(([id,q]) => `${itemById(id)?.name||'?'} ${num(q)} ${itemById(id)?.unit||''}`);
-    return `<button class="row" data-veh="${v.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(v.name)}</div><div class="sub">${esc([v.plate, parts.length ? `за ${monLabel}: ${parts.join(', ')}` : 'в этом месяце не заправлялся'].filter(Boolean).join(' · '))}</div></span><span class="side">›</span></button>`;
-  }).join('') + `</div>` : `<div class="empty"><p>Добавьте трактора, машины и генераторы — при выдаче топлива их можно будет выбрать из списка и видеть расход по каждой единице.</p></div>`;
-  h += `<button class="link view-link" data-act="excel" data-sec="fuel">Выгрузить ГСМ в Excel</button>`;
-  const hist = S.moves.filter(m => itemById(m.item)?.cat==='fuel').sort((a,b) => b.date.localeCompare(a.date) || (b.created||0)-(a.created||0)).slice(0, 30);
-  if(hist.length) h += `<div><div class="eyebrow">Последние операции</div></div><div class="list">` + hist.map(moveRow).join('') + `</div>`;
+    const sub = [v.vtype, v.plate ? `госномер ${v.plate}` : '', v.trailer ? `прицеп ${v.trailer}` : '', parts.length ? `за ${monLabel}: ${parts.join(', ')}` : ''].filter(Boolean).join(' · ');
+    return `<button class="row" data-veh="${v.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(v.name)}</div><div class="sub">${esc(sub || 'без номера')}</div></span>
+      <span class="side">${v.gsm === false ? '<span class="pill">не в ГСМ</span>' : '<span class="pill ok">в ГСМ</span>'}</span></button>`;
+  }).join('') + `</div>`;
+  if(off) h += `<div class="actions"><button class="btn adm" data-act="veh-all-gsm">Перевести всю технику в ГСМ (${off})</button></div>`;
+  h += `<button class="link view-link" data-act="excel" data-sec="tech,fuel">Выгрузить технику и ГСМ в Excel</button>`;
   return h;
 }
+function allToGsm(){ const l = vehicles().filter(v => v.gsm === false); l.forEach(v => store.merge('items', v.id, {gsm:true})); toast(`В ГСМ переведено: ${l.length}`); }
 function vehicleSheet(id){
   const v = itemById(id); if(!v) return;
-  const ops = S.moves.filter(m => m.vehicle===id).sort((a,b) => b.date.localeCompare(a.date));
-  const tot = {}; ops.forEach(m => { const k = itemById(m.item)?.name || '?'; tot[k] = (tot[k]||0) + (+m.qty||0); });
-  const body = `<div class="panel"><div class="eyebrow">Всего выдано</div>${Object.keys(tot).length ? Object.entries(tot).map(([k,q]) => `<div class="kv"><span>${esc(k)}</span><strong>${num(q)} л</strong></div>`).join('') : '<p class="muted" style="margin:0">Пока не заправлялся.</p>'}</div>
-    <div class="actions"><button class="btn primary" id="vfill">Выдать топливо</button></div>
+  const ops = S.moves.filter(m => m.vehicle===id).sort((a,b) => b.date.localeCompare(a.date) || (b.created||0)-(a.created||0));
+  const tot = {}; ops.forEach(m => { const it = itemById(m.item), k = it?.name || '?'; tot[k] = {q:(tot[k]?.q||0) + (+m.qty||0), u:it?.unit||'л'}; });
+  const body = `<div class="panel">${[['Тип', v.vtype], ['Госномер', v.plate], ['Номер прицепа', v.trailer], ['Заметка', v.note]].filter(x => x[1]).map(([k,x]) => `<div class="kv"><span>${k}</span><strong>${esc(x)}</strong></div>`).join('') || '<p class="muted" style="margin:0">Номера не указаны.</p>'}</div>
+    <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="vgsm" ${v.gsm === false ? '' : 'checked'} ${S.admin ? '' : 'disabled'}><span>В ГСМ — можно выбрать при заправке</span></label>
+    <div class="panel"><div class="eyebrow">Всего заправлено</div>${Object.keys(tot).length ? Object.entries(tot).map(([k,x]) => `<div class="kv"><span>${esc(k)}</span><strong>${num(round(x.q,2))} ${esc(x.u)}</strong></div>`).join('') : '<p class="muted" style="margin:0">Пока не заправлялась.</p>'}</div>
+    ${v.gsm === false ? '' : `<div class="actions"><button class="btn primary" id="vfill">Заправить</button></div>`}
     <div class="actions"><button class="btn adm" id="vedit">Изменить</button><button class="btn danger adm" id="vdel">Удалить</button></div><div id="vdelc"></div>
     ${ops.length ? `<div class="list">${ops.map(moveRow).join('')}</div>` : ''}`;
   openSheet(vehLabel(v), body, s => {
-    s.querySelector('#vfill').onclick = () => moveForm({cat:'fuel', kind:'out', vehicle:id});
+    const g = s.querySelector('#vgsm'); g.onchange = () => { store.merge('items', id, {gsm:g.checked}); toast(g.checked ? 'Техника доступна в ГСМ' : 'Убрана из ГСМ'); setTimeout(() => vehicleSheet(id), 150); };
+    const fl = s.querySelector('#vfill'); if(fl) fl.onclick = () => moveForm({cat:'fuel', kind:'out', vehicle:id});
     s.querySelector('#vedit').onclick = () => itemForm(v);
     s.querySelector('#vdel').onclick = () => deleteItemBox(s.querySelector('#vdelc'), v);
     s.querySelectorAll('[data-move]').forEach(b => b.onclick = () => moveForm(S.moves.find(m => m.id===b.dataset.move)));
   }, 'veh:'+id);
 }
 function moveRow(m){
-  const it = itemById(m.item);
+  const it = itemById(m.item), fuel = it?.cat==='fuel', veh = itemById(m.vehicle);
+  const parts = m.kind==='in'
+    ? [m.note ? 'от: ' + m.note : '', m.price ? money(m.price) : '']
+    : [veh ? vehLabel(veh) : '', m.who ? (fuel ? 'заправлял: ' : 'выдал: ') + m.who : '', m.note];
+  parts.push(m.byEmail ? 'внёс: ' + whoName(m.byEmail) : '');
   return `<button class="row" data-move="${m.id}"><span class="pill ${m.kind==='in'?'ok':''}">${fmtShort(m.date)}</span>
-    <span class="main"><div class="name">${esc(it?.name||'удалено')}</div><div class="sub">${esc([m.kind==='in'?'приход':'расход', vehLabel(itemById(m.vehicle)), m.note, m.price?money(m.price):''].filter(Boolean).join(' · '))}</div></span>
+    <span class="main"><div class="name">${esc(it?.name||'удалено')}</div><div class="sub">${esc(parts.filter(Boolean).join(' · '))}</div></span>
     <span class="side"><strong class="money ${m.kind==='in'?'plus':'minus'}">${m.kind==='in'?'+':'−'}${num(m.qty)} ${esc(it?.unit||'')}</strong></span></button>`;
 }
 
@@ -923,7 +953,9 @@ function bindView(){
   on('[data-open]', b => animalCard(b.dataset.open));
   on('[data-pen]', b => penSheet(b.dataset.pen));
   on('[data-ration]', b => rationForm(rationById(b.dataset.ration)));
-  on('[data-cat]', b => { S.stockCat = b.dataset.cat; render(); });
+  on('[data-cat]', b => { S.stockCat = b.dataset.cat; S.stockSub = 'bal'; S.stockFilter = ''; render(); });
+  on('[data-sub]', b => { S.stockSub = b.dataset.sub; S.stockFilter = ''; render(); });
+  { const sf = document.querySelector('#sfilter'); if(sf) sf.onchange = () => { S.stockFilter = sf.value; render(); }; }
   on('[data-item]', b => itemSheet(b.dataset.item));
   on('[data-veh]', b => vehicleSheet(b.dataset.veh));
   on('[data-mv]', b => moveForm({cat:S.stockCat, kind:b.dataset.mv}));
@@ -943,7 +975,7 @@ function bindView(){
   on('[data-restock]', b => moveForm({cat:'feed', kind:'in', item:b.dataset.restock}));
   on('[data-act]', b => ({
     'add-animal':() => animalForm(), 'add-fin':() => financeForm(), 'add-ration':() => rationForm(),
-    'add-item':() => itemForm({cat:S.stockCat}), 'seed-items':seedItems, 'milkout':() => milkOutForm(),
+    'add-item':() => itemForm({cat:S.stockCat}), 'veh-all-gsm':allToGsm, 'seed-items':seedItems, 'milkout':() => milkOutForm(),
     'feed-log':feedLogSheet, 'q-birth':() => eventForm({type:'birth'}), 'q-vet':() => eventForm({type:'vac'}), 'q-feed':() => moveForm({cat:'feed', kind:'in'}), 'q-fuel':() => moveForm({cat:'fuel', kind:'out'}), 'add-fuel':() => itemForm({cat:'fuel'}), 'add-vehicle':() => itemForm({cat:'vehicle'}), milkquick:() => milkQuickForm(S.milkDate||today(), defaultSession()), import:importSheet, regroup:() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); regroupSheet(ids, filterName(S.filter)); }, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
     logout:() => fb && fb.au.signOut(fb.auth)
   })[b.dataset.act]?.());
@@ -952,12 +984,12 @@ function go(tab){ if(tab==='herd' && S.tab==='herd'){ S.filter=''; S.q=''; } S.t
 document.querySelectorAll('nav.tabs button').forEach(b => b.onclick = () => go(b.dataset.tab));
 $('#fab').onclick = () => ({
   herd:() => animalForm(), milk:() => milkQuickForm(S.milkDate||today(), defaultSession()),
-  stock:() => moveForm({cat:S.stockCat, kind:S.stockCat==='fuel'?'out':'in'}), plan:() => eventForm({}), money:() => financeForm()
+  stock:() => S.stockCat==='tech' ? itemForm({cat:'vehicle'}) : moveForm({cat:S.stockCat, kind:S.stockSub==='out' || (S.stockSub!=='in' && S.stockCat==='fuel') ? 'out' : 'in'}), plan:() => eventForm({}), money:() => financeForm()
 })[S.tab]?.();
 
 function seedItems(){
   const have = new Set(S.items.map(i => i.name.toLowerCase()));
-  DEFAULT_ITEMS[S.stockCat].forEach(([name, unit]) => { if(!have.has(name.toLowerCase())) store.add('items', {name, unit, cat:S.stockCat}); });
+  (DEFAULT_ITEMS[S.stockCat]||[]).forEach(([name, unit]) => { if(!have.has(name.toLowerCase())) store.add('items', {name, unit, cat:S.stockCat}); });
   toast('Список добавлен');
 }
 function toggleFeedPause(){
@@ -1368,7 +1400,7 @@ function rationForm(r, prePens){
 function deleteItemBox(holder, it){
   const ops = S.moves.filter(m => m.item===it.id || m.vehicle===it.id).length;
   const inRation = S.rations.some(r => (r.items||[]).some(x => x.item===it.id));
-  const what = it.cat==='vehicle' ? 'транспорт' : it.cat==='fuel' ? 'топливо' : 'корм';
+  const what = it.cat==='vehicle' ? 'технику' : it.cat==='fuel' ? 'топливо' : it.cat==='vet' ? 'препарат' : 'корм';
   const warn = [ops ? `по нему ${ops} ${plural(ops,'операция','операции','операций')} — они останутся в истории без названия` : '', inRation ? 'он входит в рацион — уберите его из рациона' : ''].filter(Boolean).join('; ');
   askConfirm(holder, `Удалить ${what} «${esc(it.name)}»?${warn ? ' Учтите: ' + warn + '.' : ''}`, () => { store.del('items', it.id); toast('Удалено'); closeSheet(); });
 }
@@ -1393,27 +1425,35 @@ function itemSheet(id){
   }, 'item:'+id);
 }
 function itemForm(it){
-  const isEdit = !!it?.id, v = {unit: it?.cat==='fuel' ? 'л' : 'кг', ...it}, isVeh = v.cat==='vehicle';
-  const used = isEdit && (S.moves.some(m => m.item===it.id || m.vehicle===it.id) || S.rations.some(r => (r.items||[]).some(x => x.item===it.id)));
+  const cat0 = it?.cat || 'feed', isEdit = !!it?.id, v = {unit: cat0==='fuel' ? 'л' : cat0==='vet' ? 'фл' : 'кг', ...it}, isVeh = v.cat==='vehicle';
+  const used = isEdit && S.moves.some(m => m.item===it.id || m.vehicle===it.id);
+  const units = UNITS.includes(v.unit) ? UNITS : [...UNITS, v.unit];
+  const ph = {fuel:'напр. Дизельное топливо', vet:'напр. Ивермектин 1%', feed:'напр. ЗЦМ'}[v.cat] || '';
   const body = `<form id="itf" novalidate>
-    ${fld('it-name', isVeh ? 'Название *' : 'Название *',`<input id="it-name" name="name" value="${esc(v.name)}" placeholder="${isVeh ? 'напр. МТЗ-82, ГАЗель, генератор' : v.cat==='fuel'?'напр. Бензин АИ-95':'напр. Сено луговое'}" autocomplete="off" list="it-names">`)}
-    ${!isVeh && v.cat==='fuel' ? `<datalist id="it-names">${['Бензин АИ-92','Бензин АИ-95','Дизельное топливо','Моторное масло','Масло гидравлическое'].map(x => `<option value="${x}">`).join('')}</datalist>` : ''}
-    ${isVeh ? fld('it-plate','Госномер (необязательно)',`<input id="it-plate" name="plate" value="${esc(v.plate)}" placeholder="напр. 1234 ВА 26" autocomplete="off">`)
-            : fld('it-unit','Единица',`<select id="it-unit" name="unit">${UNITS.map(u => opt(u,u,v.unit)).join('')}</select>`)}
+    ${fld('it-name','Название *',`<input id="it-name" name="name" value="${esc(v.name)}" placeholder="${isVeh ? 'напр. МТЗ-82, КамАЗ, погрузчик' : ph}" autocomplete="off" list="it-names">`)}
+    ${v.cat==='fuel' ? `<datalist id="it-names">${['Бензин АИ-92','Бензин АИ-95','Дизельное топливо','Моторное масло','Масло гидравлическое','Антифриз'].map(x => `<option value="${x}">`).join('')}</datalist>` : ''}
+    ${isVeh ? `${fld('it-vtype','Тип',`<select id="it-vtype" name="vtype">${opt('','—',v.vtype||'')}${VEH_TYPES.map(t => opt(t,t,v.vtype)).join('')}</select>`)}
+      <div class="two">${fld('it-plate','Госномер',`<input id="it-plate" name="plate" value="${esc(v.plate)}" placeholder="А123ВС 26" autocomplete="off">`)}
+        ${fld('it-trailer','Номер прицепа',`<input id="it-trailer" name="trailer" value="${esc(v.trailer)}" placeholder="если есть" autocomplete="off">`)}</div>
+      ${fld('it-note','Заметка',`<input id="it-note" name="note" value="${esc(v.note)}" placeholder="напр. кто закреплён" autocomplete="off">`)}
+      <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="it-gsm" ${v.gsm === false ? '' : 'checked'}><span>В ГСМ — можно выбрать при заправке</span></label>`
+    : `${fld('it-unit','Единица',`<select id="it-unit" name="unit">${units.map(u => opt(u,u,v.unit)).join('')}</select>`)}
+      ${v.cat==='vet' ? fld('it-exp','Годен до (необязательно)',`<input id="it-exp" type="date" name="expiry" value="${esc(v.expiry)}">`) : ''}`}
     <p class="err" id="iterr" hidden></p>
     <div class="actions"><button class="btn primary" type="submit">${isEdit?'Сохранить':'Добавить'}</button></div>
     ${isEdit ? `<div class="actions"><button class="btn danger" type="button" id="itdel">Удалить</button></div><div id="itdelc"></div>` : ''}
   </form>`;
-  openSheet(isEdit ? (isVeh ? 'Изменить транспорт' : 'Изменить позицию') : (isVeh ? 'Новый транспорт' : v.cat==='fuel' ? 'Новый вид топлива' : 'Новый корм'), body, s => {
+  openSheet(isEdit ? `Изменить: ${v.name}` : `Новая позиция: ${ITEM_WORD[v.cat]?.one || 'техника'}`, body, s => {
     const f = s.querySelector('#itf');
     f.onsubmit = ev => {
-      ev.preventDefault(); const d = Object.fromEntries(new FormData(f)); d.name = d.name.trim();
+      ev.preventDefault(); const d = Object.fromEntries(new FormData(f)); for(const k in d) d[k] = String(d[k]).trim();
       if(!d.name){ const e = s.querySelector('#iterr'); e.hidden = false; e.textContent = 'Укажите название.'; return; }
+      if(isVeh){ d.gsm = s.querySelector('#it-gsm').checked; d.unit = ''; }
       if(isEdit) store.set('items', it.id, {...strip(it), ...d}); else store.add('items', {...d, cat:v.cat});
       toast('Сохранено'); closeSheet();
     };
     const del = s.querySelector('#itdel');
-    if(del) del.onclick = () => askConfirm(s.querySelector('#itdelc'), used ? (isVeh ? 'По этому транспорту есть выдачи топлива. Удалить всё равно? Выдачи останутся без названия транспорта.' : 'По этой позиции есть операции или она входит в рацион. Удалить всё равно? Операции останутся без названия.') : 'Удалить?',
+    if(del) del.onclick = () => askConfirm(s.querySelector('#itdelc'), used ? (isVeh ? 'По этой технике есть заправки. Удалить всё равно? Заправки останутся без названия техники.' : 'По этой позиции есть операции. Удалить всё равно? Операции останутся без названия.') : 'Удалить?',
       () => { store.del('items', it.id); toast('Удалено'); closeSheet(); });
   }, 'itform');
 }
@@ -1421,39 +1461,47 @@ function moveForm(m){
   const isEdit = !!m?.id;
   const cat = isEdit ? (itemById(m.item)?.cat || 'feed') : (m?.cat || 'feed');
   const v = {kind:'in', date:today(), ...m};
-  const items = S.items.filter(i => i.cat===cat).sort((a,b) => a.name.localeCompare(b.name,'ru'));
+  const items = itemsOf(cat);
   if(!items.length){ itemForm({cat}); return; }
-  const notes = [...new Set(S.moves.filter(x => itemById(x.item)?.cat===cat && x.note).map(x => x.note))].slice(0, 30);
+  const ofCat = x => itemById(x.item)?.cat===cat;
+  const notes = k => [...new Set(S.moves.filter(x => ofCat(x) && x.kind===k && x.note).sort((a,b) => (b.created||0)-(a.created||0)).map(x => x.note))].slice(0, 30);
+  const whos = [...new Set(S.moves.filter(x => ofCat(x) && x.who).sort((a,b) => (b.created||0)-(a.created||0)).map(x => x.who))].slice(0, 30);
+  const vs = gsmVehicles(); if(v.vehicle && !vs.some(x => x.id===v.vehicle) && itemById(v.vehicle)) vs.push(itemById(v.vehicle));
+  const W = ITEM_WORD[cat];
   const body = `<form id="mvf" novalidate>
-    <div class="field"><label>Операция</label><div class="seg"><label><input type="radio" name="kind" value="in" ${v.kind==='in'?'checked':''}>Приход</label><label><input type="radio" name="kind" value="out" ${v.kind==='out'?'checked':''}>${cat==='fuel'?'Выдача / расход':'Расход'}</label></div></div>
-    ${fld('mv-item', cat==='fuel' ? 'Топливо' : 'Корм', `<select id="mv-item" name="item">${items.map(i => opt(i.id, `${i.name}, ${i.unit}`, v.item || items[0].id)).join('')}</select>`)}
-    <div class="two">${fld('mv-qty','Количество *',`<input id="mv-qty" name="qty" inputmode="decimal" value="${esc(v.qty)}" autocomplete="off">`)}
+    <div class="field"><label>Операция</label><div class="seg"><label><input type="radio" name="kind" value="in" ${v.kind==='in'?'checked':''}>Приход</label><label><input type="radio" name="kind" value="out" ${v.kind==='out'?'checked':''}>${cat==='fuel'?'Заправка / расход':'Расход'}</label></div></div>
+    ${fld('mv-item', W.one, `<select id="mv-item" name="item">${items.map(i => opt(i.id, `${i.name}, ${i.unit}`, v.item || items[0].id)).join('')}</select>`)}
+    <div class="two">${fld('mv-qty','Количество *',`<input id="mv-qty" name="qty" inputmode="decimal" value="${esc(v.qty != null ? String(v.qty).replace('.',',') : '')}" autocomplete="off">`)}
       ${fld('mv-date','Дата',`<input id="mv-date" type="date" name="date" value="${esc(v.date)}">`)}</div>
     <p class="muted" id="mv-bal" style="margin:0"></p>
-    ${cat==='fuel' ? `<div class="field" id="mv-vehw"><div class="kv"><label for="mv-veh">Транспорт</label><button type="button" class="link adm" id="mv-addveh">+ Добавить транспорт</button></div><select id="mv-veh" name="vehicle">${opt('','— не выбран —', v.vehicle||'')}${vehicles().map(x => opt(x.id, vehLabel(x), v.vehicle)).join('')}</select></div>` : ''}
+    <div id="mv-outw">
+      ${cat==='fuel' ? `<div class="field"><div class="kv"><label for="mv-veh">Какую технику заправили</label><button type="button" class="link adm" id="mv-addveh">+ Техника</button></div><select id="mv-veh" name="vehicle">${opt('','— не выбрана —', v.vehicle||'')}${vs.map(x => opt(x.id, vehLabel(x), v.vehicle)).join('')}</select></div>` : ''}
+      ${cat!=='feed' ? fld('mv-who', cat==='fuel' ? 'Кто заправлял' : 'Кто выдал / применил', `<input id="mv-who" name="who" value="${esc(v.who)}" list="mv-whos" autocomplete="off" placeholder="имя">`) + `<datalist id="mv-whos">${whos.map(n => `<option value="${esc(n)}">`).join('')}</datalist>` : ''}
+    </div>
     ${fld('mv-note','', `<input id="mv-note" name="note" value="${esc(v.note)}" list="mv-notes" autocomplete="off">`)}
-    <datalist id="mv-notes">${notes.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+    <datalist id="mv-notes"></datalist>
     <div class="field" id="mv-pricew">${isEdit ? '' : `<label for="mv-price">Сумма, ₽ (попадёт в расходы)</label><input id="mv-price" name="price" type="number" min="0" step="1" inputmode="numeric">`}</div>
     <p class="err" id="mverr" hidden></p>
     <div class="actions"><button class="btn primary" type="submit">${isEdit?'Сохранить':'Записать'}</button></div>
-    ${isEdit ? `<div class="actions"><button class="btn danger" type="button" id="mvdel">Удалить операцию</button></div><div id="mvdelc"></div>` : ''}
+    ${isEdit ? `<p class="muted" style="margin:0">Внёс: ${esc(m.byEmail || '—')}${m.created ? ', ' + new Date(m.created).toLocaleString('ru-RU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}) : ''}</p><div class="actions"><button class="btn danger" type="button" id="mvdel">Удалить операцию</button></div><div id="mvdelc"></div>` : ''}
   </form>`;
-  openSheet(isEdit ? 'Изменить операцию' : `${STOCK[cat]}: приход / расход`, body, s => {
+  openSheet(isEdit ? 'Изменить операцию' : `${STOCK_FULL[cat]}: ${v.kind==='in' ? 'приход' : cat==='fuel' ? 'заправка' : 'расход'}`, body, s => {
     const f = s.querySelector('#mvf');
+    const NOTE = {in:['От кого (поставщик)', cat==='fuel' ? 'напр. АЗС Лукойл, бензовоз' : cat==='vet' ? 'напр. Ветаптека, накладная №' : 'напр. КФХ Иванов, 40 рулонов'],
+      out:[cat==='fuel' ? 'Комментарий' : cat==='vet' ? 'Кому / для чего' : 'Куда / зачем', cat==='fuel' ? 'напр. пробег, моточасы' : cat==='vet' ? 'напр. обработка Овчарня 1' : 'напр. Овчарня 2']};
+    let lastK = '';
     const sync = () => {
       const k = f.querySelector('input[name=kind]:checked').value, it = itemById(f.querySelector('#mv-item').value);
-      const lbl = s.querySelector('label[for=mv-note]');
-      lbl.textContent = k==='in' ? 'Поставщик / откуда' : cat==='fuel' ? 'Комментарий' : 'Куда / зачем';
-      f.querySelector('#mv-note').placeholder = k==='in' ? (cat==='fuel' ? 'напр. АЗС Лукойл' : 'напр. КФХ Иванов, 40 тюков') : (cat==='fuel' ? 'напр. кто получил, пробег' : 'напр. подкормка ягнят');
-      const vw = s.querySelector('#mv-vehw'); if(vw) vw.hidden = k!=='out';
+      s.querySelector('label[for=mv-note]').textContent = NOTE[k][0]; f.querySelector('#mv-note').placeholder = NOTE[k][1];
+      if(k !== lastK){ s.querySelector('#mv-notes').innerHTML = notes(k).map(n => `<option value="${esc(n)}">`).join(''); lastK = k; }
+      s.querySelector('#mv-outw').hidden = k!=='out';
       s.querySelector('#mv-pricew').hidden = k!=='in' || isEdit;
-      let b = stockBalance()[it.id] || 0; if(isEdit) b -= (m.kind==='in'?1:-1) * (+m.qty||0);
+      let b = stockBalance()[it.id] || 0; if(isEdit && m.item===it.id) b -= (m.kind==='in'?1:-1) * (+m.qty||0);
       const q = dec(f.querySelector('#mv-qty').value) || 0, after = b + (k==='in' ? q : -q);
-      s.querySelector('#mv-bal').innerHTML = `Остаток: ${num(b)} ${esc(it.unit)}${q ? ` → <strong class="${after<0?'money minus':''}">${num(after)} ${esc(it.unit)}</strong>` : ''}`;
+      s.querySelector('#mv-bal').innerHTML = `Остаток: ${num(b)} ${esc(it.unit)}${q ? ` → <strong class="${after<0?'money minus':''}">${num(round(after,3))} ${esc(it.unit)}</strong>` : ''}`;
     };
     f.oninput = sync; f.onchange = sync; sync();
-    const av = s.querySelector('#mv-addveh');
-    if(av) av.onclick = () => itemForm({cat:'vehicle'});
+    const av = s.querySelector('#mv-addveh'); if(av) av.onclick = () => itemForm({cat:'vehicle'});
     f.onsubmit = ev => {
       ev.preventDefault();
       const d = Object.fromEntries(new FormData(f)), q = dec(d.qty), err = s.querySelector('#mverr');
@@ -1461,13 +1509,14 @@ function moveForm(m){
       const it = itemById(d.item), price = +d.price || 0;
       const data = {item:d.item, kind:d.kind, qty:round(q,3), date:d.date || today(), note:(d.note||'').trim()};
       if(d.kind==='out' && d.vehicle) data.vehicle = d.vehicle;
+      if(d.kind==='out' && (d.who||'').trim()) data.who = d.who.trim();
       if(d.kind==='in' && price) data.price = price;
-      if(isEdit){ const old = strip(m); if(!data.vehicle) delete old.vehicle; store.set('moves', m.id, {...old, ...data, price: m.price ?? null}); }
+      if(isEdit){ const old = strip(m); if(!data.vehicle) delete old.vehicle; if(!data.who) delete old.who; store.set('moves', m.id, {...old, ...data, price: m.price ?? null}); }
       else {
         store.add('moves', data);
-        if(d.kind==='in' && price) store.add('finance', {date:data.date, kind:'expense', category: cat==='fuel' ? 'ГСМ' : 'Корма', amount:price, note:`${it.name}, ${num(q)} ${it.unit}${data.note ? ' · ' + data.note : ''}`});
+        if(d.kind==='in' && price) store.add('finance', {date:data.date, kind:'expense', category: FIN_CAT[cat], amount:price, note:`${it.name}, ${num(q)} ${it.unit}${data.note ? ' · ' + data.note : ''}`});
       }
-      toast(d.kind==='in' ? 'Приход записан' : 'Расход записан'); closeSheet();
+      toast(d.kind==='in' ? 'Приход записан' : cat==='fuel' ? 'Заправка записана' : 'Расход записан'); closeSheet();
     };
     const del = s.querySelector('#mvdel');
     if(del) del.onclick = () => askConfirm(s.querySelector('#mvdelc'), 'Удалить операцию? Запись в финансах, если была, удалите отдельно.',
@@ -1862,7 +1911,7 @@ ${sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" Co
 /* ----- Что попадает в файл ----- */
 const XL_SECTIONS = {
   herd:'Стадо (все животные)', births:'Окоты и приплод', events:'Ветеринария и события', pens:'Загоны',
-  feed:'Склад кормов', fuel:'ГСМ', milk:'Молоко по дням', milkHeads:'Надои по головам', milkOut:'Отгрузки молока', finance:'Финансы'
+  feed:'Склад кормов', fuel:'ГСМ', vet:'Ветеринарная аптека', tech:'Склад техники', milk:'Молоко по дням', milkHeads:'Надои по головам', milkOut:'Отгрузки молока', finance:'Финансы'
 };
 function xlSheets(from, to, secs){
   const inP = d => d && d >= from && d <= to;
@@ -1922,11 +1971,18 @@ function xlSheets(from, to, secs){
       cols:[{h:'Помещение',w:12},{h:'Загон',w:7},{h:'Назначение',w:22},{h:'Голов',w:7,t:'i'},{h:'Овец',w:7,t:'i'},{h:'Коз',w:7,t:'i'},{h:'Маток',w:7,t:'i'},{h:'Молодняк',w:9,t:'i'},{h:'Бирки',w:60}],
       rows, total:[null, '', '', sum(rows, 3), sum(rows, 4), sum(rows, 5), sum(rows, 6), sum(rows, 7)]});
   }
-  for(const cat of ['feed', 'fuel']){
+  if(secs.tech){
+    const rows = vehicles().map(v => { const per = {}; S.moves.filter(m => m.vehicle === v.id && m.kind === 'out' && inP(m.date)).forEach(m => { const it = itemById(m.item); const k = it?.name || '?'; per[k] = (per[k] || 0) + (+m.qty || 0); });
+      return [v.name, v.vtype || '', v.plate || '', v.trailer || '', v.gsm === false ? 'нет' : 'да', Object.entries(per).map(([k, q]) => `${k} ${num(round(q, 2))}`).join('; '), v.note || '']; });
+    out.push({name:'Техника', title:'Склад техники', note:`На ${fmtD(today())}. Заправки — ${period.toLowerCase()}`,
+      cols:[{h:'Техника',w:22},{h:'Тип',w:12},{h:'Госномер',w:13},{h:'Номер прицепа',w:14},{h:'В ГСМ',w:7},{h:'Заправлено за период',w:30},{h:'Заметка',w:24}], rows});
+  }
+  const XL_CAT = {feed:{n:'Корма', t:'Склад кормов', w:'Корм'}, fuel:{n:'ГСМ', t:'ГСМ', w:'Топливо'}, vet:{n:'Аптека', t:'Ветеринарная аптека', w:'Препарат'}};
+  for(const cat of ['feed', 'fuel', 'vet']){
     if(!secs[cat]) continue;
-    const items = S.items.filter(i => i.cat === cat).sort((a, b) => a.name.localeCompare(b.name, 'ru')), {use} = feedUse();
+    const X = XL_CAT[cat], items = S.items.filter(i => i.cat === cat).sort((a, b) => a.name.localeCompare(b.name, 'ru')), {use} = feedUse();
     const ops = [];
-    S.moves.filter(m => itemById(m.item)?.cat === cat).forEach(m => ops.push({date:m.date, item:m.item, kind:m.kind, qty:+m.qty || 0, note:[vehLabel(itemById(m.vehicle)), m.note].filter(Boolean).join(' · '), price:m.price || '', by:m.byEmail}));
+    S.moves.filter(m => itemById(m.item)?.cat === cat).forEach(m => ops.push({date:m.date, item:m.item, kind:m.kind, qty:+m.qty || 0, veh:vehLabel(itemById(m.vehicle)), who:m.who || '', note:m.note || '', price:m.price || '', by:m.byEmail}));
     const bal = rows => items.map(it => {
       const o = ops.filter(x => x.item === it.id), before = o.filter(x => x.date < from), inn = o.filter(x => inP(x.date));
       const start = round(before.reduce((s, x) => s + (x.kind === 'in' ? x.qty : -x.qty), 0), 3);
@@ -1940,16 +1996,18 @@ function xlSheets(from, to, secs){
       return r;
     });
     const brows = bal();
-    const bcols = cat === 'feed'
-      ? [{h:'Корм',w:22},{h:'Ед.',w:6},{h:'Остаток на начало',w:12,t:'n'},{h:'Приход',w:11,t:'n'},{h:'Расход',w:11,t:'n'},{h:'Остаток на конец',w:12,t:'n'},{h:'Закуплено на сумму',w:13,t:'m'}]
+    const bcols = cat !== 'fuel'
+      ? [{h:X.w,w:22},{h:'Ед.',w:6},{h:'Остаток на начало',w:12,t:'n'},{h:'Приход',w:11,t:'n'},{h:'Расход',w:11,t:'n'},{h:'Остаток на конец',w:12,t:'n'},{h:'Закуплено на сумму',w:13,t:'m'}]
       : [{h:'Топливо, масла',w:22},{h:'Ед.',w:6},{h:'Остаток на начало',w:12,t:'n'},{h:'Приход',w:11,t:'n'},{h:'Расход',w:11,t:'n'},{h:'Остаток на конец',w:12,t:'n'},{h:'Закуплено на сумму',w:13,t:'m'}];
     const btot = bcols.map((c, i) => c.t === 'm' ? sum(brows, i) : null); btot[0] = null;
-    out.push({name:cat === 'feed' ? 'Корма — остатки' : 'ГСМ — остатки', title:cat === 'feed' ? 'Склад кормов: приход, расход, остаток' : 'ГСМ: приход, расход, остаток', note:period, cols:bcols, rows:brows, total:btot});
-    const kindName = {in:'Приход', out:cat === 'fuel' ? 'Выдача / расход' : 'Расход', auto:'Списано по рационам'};
-    const orows = ops.filter(x => inP(x.date)).sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind)).map(x => [x.date, itemById(x.item)?.name || 'удалено', kindName[x.kind], x.kind === 'in' ? x.qty : -x.qty, itemById(x.item)?.unit || '', x.note, x.price === '' ? '' : +x.price, x.by ? x.by.split('@')[0] : '']);
-    out.push({name:cat === 'feed' ? 'Корма — движение' : 'ГСМ — движение', title:cat === 'feed' ? 'Движение кормов' : 'Движение ГСМ', note:period + '. Расход — со знаком минус',
-      cols:[{h:'Дата',w:12,t:'d'},{h:cat === 'feed' ? 'Корм' : 'Топливо',w:22},{h:'Операция',w:20},{h:'Количество',w:11,t:'n'},{h:'Ед.',w:6},{h:cat === 'fuel' ? 'Техника / поставщик' : 'Комментарий',w:26},{h:'Сумма',w:11,t:'m'},{h:'Кто записал',w:12}],
-      rows:orows, total:[null, '', '', '', '', '', sum(orows, 6)]});
+    out.push({name:X.n + ' — остатки', title:X.t + ': приход, расход, остаток', note:period, cols:bcols, rows:brows, total:btot});
+    const kindName = {in:'Приход', out:cat === 'fuel' ? 'Заправка / расход' : 'Расход'};
+    const orows = ops.filter(x => inP(x.date)).sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind)).map(x => [x.date, itemById(x.item)?.name || 'удалено', kindName[x.kind], x.kind === 'in' ? x.qty : -x.qty, itemById(x.item)?.unit || '',
+      ...(cat === 'fuel' ? [x.veh, x.who] : cat === 'vet' ? [x.who] : []), x.kind === 'in' ? x.note : '', x.kind === 'out' ? x.note : '', x.price === '' ? '' : +x.price, x.by ? whoName(x.by) : '']);
+    const extra = cat === 'fuel' ? [{h:'Техника',w:22},{h:'Кто заправлял',w:16}] : cat === 'vet' ? [{h:'Кто выдал / применил',w:16}] : [];
+    const cols = [{h:'Дата',w:12,t:'d'},{h:X.w,w:22},{h:'Операция',w:16},{h:'Количество',w:11,t:'n'},{h:'Ед.',w:6},...extra,{h:'От кого',w:22},{h:'Комментарий',w:24},{h:'Сумма',w:11,t:'m'},{h:'Кто записал',w:12}];
+    const tot = cols.map((c, k) => c.t === 'm' ? sum(orows, k) : null); tot[0] = null;
+    out.push({name:X.n + ' — движение', title:'Движение — ' + X.t, note:period + '. Расход — со знаком минус', cols, rows:orows, total:tot});
   }
   if(secs.milk){
     const days = new Set(); S.milk.forEach(m => inP(m.date) && days.add(m.date)); S.milkout.forEach(o => inP(o.date) && days.add(o.date));
