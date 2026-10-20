@@ -231,7 +231,7 @@ function docTitle(col, d){
     case 'items': return `${d.cat==='vehicle' ? 'Техника' : d.cat==='fuel' ? 'Топливо' : d.cat==='vet' ? 'Препарат' : 'Корм'}: ${d.name || ''}`;
     case 'rations': return `Рацион «${d.name || ''}»`;
     case 'pens': return penLong(d.id || '');
-    case 'settings': return 'Настройки списания кормов';
+    case 'settings': return d.id === 'people' || d.names ? 'Имена пользователей' : 'Настройки';
     case 'feedauto': return `Списание кормов за ${d.date ? fmtShort(d.date) : ''}`;
   }
   return col;
@@ -474,7 +474,7 @@ function render(){
   $('#fab').hidden = !['herd','milk','stock','plan','money'].includes(S.tab) || (S.tab==='herd' && S.herdMode==='pens');
   let html = '';
   if(S.demo) html += `<div class="banner">Демо-режим: всё хранится только в этом браузере.${S.animals.some(a => a.demo) ? ` Сейчас открыт пример хозяйства. <button class="link adm" data-act="clear-demo">Очистить пример</button>` : ''}</div>`;
-  html += ({log:logView, home:homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
+  html += ({log:logView, people:peopleView, home:homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
   const focus = document.activeElement?.id, pos = document.activeElement?.selectionStart;
   v.innerHTML = html;
   bindView();
@@ -533,7 +533,7 @@ function logView(){
   if(!logDocs) return h + `<div class="empty"><p>Загружаем…</p></div>`;
   const people = [...new Set(logDocs.map(x => x.byEmail).filter(Boolean))].sort();
   const list = logDocs.filter(x => !logWho || x.byEmail===logWho);
-  h += `<div class="field"><label for="lg-who">Кто</label><select id="lg-who">${opt('', 'Все', logWho)}${people.map(p => opt(p, p, logWho)).join('')}</select></div>`;
+  h += `<div class="field"><div class="kv"><label for="lg-who">Кто</label><button class="link" data-tab-go="people">Имена пользователей</button></div><select id="lg-who">${opt('', 'Все', logWho)}${people.map(p => opt(p, whoName(p) !== String(p).split('@')[0] ? `${whoName(p)} (${p})` : p, logWho)).join('')}</select></div>`;
   if(!list.length) return h + `<div class="empty"><p>Записей пока нет. Здесь будут появляться все добавления, изменения и удаления: кто, когда и что именно поменял.</p></div>`;
   const ACT = {create:['Добавлено','ok'], update:['Изменено','warn'], delete:['Удалено','bad']};
   let day = '';
@@ -543,7 +543,7 @@ function logView(){
     return hd + `<div class="logrow"><div class="logtime">${pad(d.getHours())}:${pad(d.getMinutes())}</div><div class="logmain">
       <div><span class="pill ${ac}">${al}</span> <b>${esc(x.title || '')}</b></div>
       ${(x.changes||[]).length ? `<ul>${x.changes.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
-      <div class="muted">${esc(x.byEmail || 'неизвестно')}</div></div></div>`;
+      <div class="muted">${esc(x.byEmail ? (/@/.test(x.byEmail) ? `${whoName(x.byEmail)} · ${x.byEmail}` : x.byEmail) : 'неизвестно')}</div></div></div>`;
   }).join('');
   return h + `<p class="muted">Показано записей: ${list.length}.</p>`;
 }
@@ -715,7 +715,9 @@ function milkView(){
     <table class="mtable"><thead><tr><th></th><th><span class="lg"><i style="background:var(--goat)"></i>Козы</span></th><th><span class="lg"><i style="background:var(--sheep)"></i>Овцы</span></th><th>Всего</th></tr></thead>
       <tbody>${['am','pm'].map(ss => `<tr><th>${SESS[ss]}</th>${cell(ss,'goat')}${cell(ss,'sheep')}<td class="sum">${num(tot(ss))}</td></tr>`).join('')}
       <tr class="tot"><th>За день</th><td>${num(v('am','goat')+v('pm','goat'))}</td><td>${num(v('am','sheep')+v('pm','sheep'))}</td><td class="sum">${num(day)}</td></tr></tbody></table>
-    <p class="muted" style="margin:0">Литры. Нажмите на ячейку, чтобы записать надой по каждой голове.</p></div>`;
+    <p class="muted" style="margin:0">Литры. Нажмите на ячейку, чтобы записать надой по каждой голове.</p>${(() => { if(!S.admin) return '';
+      const w = ['am','pm'].map(ss => { const ws = [...new Set(['goat','sheep'].map(s2 => milkDoc(d, ss, s2)).filter(Boolean).map(m => whoName(m.updatedByEmail || m.byEmail)).filter(Boolean))]; return ws.length ? `${SESS[ss].toLowerCase()} — ${ws.join(', ')}` : ''; }).filter(Boolean);
+      return w.length ? `<p class="muted" style="margin:0">Записали: ${esc(w.join('; '))}</p>` : ''; })()}</div>`;
   h += `<div class="panel"><div class="eyebrow">Молоко в наличии</div>${sp.map(s => `<div class="kv"><span>${MILKNAME[s]}</span><strong class="${bal[s]<0?'money minus':''}">${num(bal[s])} л</strong></div>`).join('')}
     <div class="actions"><button class="btn primary" data-act="milkout">Отгрузка на сыроварню</button></div></div>`;
   h += milkChart(d, sp);
@@ -727,7 +729,7 @@ function milkView(){
   h += `<button class="link view-link" data-act="excel" data-sec="milk,milkHeads,milkOut">Выгрузить молоко в Excel</button>`;
   if(outs.length) h += `<div><div class="eyebrow">Отгрузки и списания</div></div><div class="list">` + outs.map(o => `<button class="row" data-mo="${o.id}">
       <span class="pill">${fmtShort(o.date)}</span>
-      <span class="main"><div class="name">${MILKOUT[o.kind]||'Отгрузка'} · ${MILKNAME[o.species]||''}</div><div class="sub">${esc([o.to, o.price?money(o.price):''].filter(Boolean).join(' · '))}</div></span>
+      <span class="main"><div class="name">${MILKOUT[o.kind]||'Отгрузка'} · ${MILKNAME[o.species]||''}</div><div class="sub">${esc([o.to, o.price?money(o.price):'', byLine(o.byEmail)].filter(Boolean).join(' · '))}</div></span>
       <span class="side"><strong>−${num(o.liters)} л</strong></span></button>`).join('') + `</div>`;
   return h;
 }
@@ -759,7 +761,39 @@ function stockView(){
   return h + (cat==='tech' ? techView() : stockCatView(cat));
 }
 const itemsOf = cat => S.items.filter(i => i.cat===cat).sort((a,b) => a.name.localeCompare(b.name,'ru'));
-const whoName = e => e ? String(e).split('@')[0] : '';
+// Имена пользователей: задаёт администратор (settings/people → names: {почта: имя}). Подпись «внёс» видят только администраторы.
+const peopleNames = () => setting('people')?.names || {};
+const whoName = e => { if(!e) return ''; const k = String(e).toLowerCase().trim(); return peopleNames()[k] || String(e).split('@')[0]; };
+const byLine = (e, word='внёс') => S.admin && e ? `${word}: ${whoName(e)}` : '';
+function knownEmails(){
+  const set = new Set(Object.keys(peopleNames()));
+  for(const col of ['moves','milk','milkout','events','animals','finance']) (S[col]||[]).forEach(d => { [d.byEmail, d.updatedByEmail].forEach(x => x && set.add(String(x).toLowerCase())); });
+  (logDocs||[]).forEach(x => x.byEmail && /@/.test(x.byEmail) && set.add(String(x.byEmail).toLowerCase()));
+  if(S.email) set.add(S.email.toLowerCase());
+  return [...set].filter(x => /@/.test(x)).sort((a, b) => whoName(a).localeCompare(whoName(b), 'ru'));
+}
+function peopleView(){
+  let h = backTo('Пользователи');
+  if(!S.admin) return h + `<div class="empty"><p>Раздел недоступен.</p></div>`;
+  const names = peopleNames(), list = knownEmails();
+  h += `<p class="muted" style="margin:0">Впишите имя для каждой почты. Имя будет видно вам в журнале и в записях («внёс: Иван»). Работники эти подписи не видят. Самих пользователей добавляют в консоли Firebase (Authentication → Users).</p>
+    <form id="pplf" novalidate><div class="ppl">${list.map((e, i) => `<div class="field"><label for="ppl-${i}" style="word-break:break-all">${esc(e)}</label>
+      <input id="ppl-${i}" name="${esc(e)}" value="${esc(names[e] || '')}" placeholder="имя, например Иван" autocomplete="off"></div>`).join('')}</div>
+    <div class="two">${fld('ppl-new','Ещё почта',`<input id="ppl-new" type="email" placeholder="ivan@mail.ru" autocomplete="off">`)}${fld('ppl-newn','Имя',`<input id="ppl-newn" placeholder="Иван" autocomplete="off">`)}</div>
+    <p class="err" id="pplerr" hidden></p>
+    <div class="actions"><button class="btn primary" type="submit">Сохранить имена</button></div></form>`;
+  return h;
+}
+function bindPeople(){
+  const f = $('#pplf'); if(!f) return;
+  f.onsubmit = ev => {
+    ev.preventDefault(); const out = {};
+    f.querySelectorAll('.ppl input').forEach(i => { const v = i.value.trim(); if(v) out[i.name] = v; });
+    const ne = f.querySelector('#ppl-new').value.trim().toLowerCase(), nn = f.querySelector('#ppl-newn').value.trim();
+    if(ne || nn){ if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ne) || !nn){ const e = f.querySelector('#pplerr'); e.hidden = false; e.textContent = 'Для новой строки укажите и почту, и имя.'; return; } out[ne] = nn; }
+    store.set('settings', 'people', {names: out}); toast('Имена сохранены'); setTimeout(render, 200);
+  };
+}
 const monthTitle = ym => { const s = parse(ym + '-01').toLocaleDateString('ru-RU', {month:'long', year:'numeric'}).replace(/\s*г\.?$/, ''); return s[0].toUpperCase() + s.slice(1); };
 function stockCatView(cat){
   const items = itemsOf(cat), bal = stockBalance(), sub = S.stockSub || 'bal';
@@ -839,7 +873,7 @@ function moveRow(m){
   const parts = m.kind==='in'
     ? [m.note ? 'от: ' + m.note : '', m.price ? money(m.price) : '']
     : [veh ? vehLabel(veh) : '', m.who ? (fuel ? 'заправлял: ' : 'выдал: ') + m.who : '', m.note];
-  parts.push(m.byEmail ? 'внёс: ' + whoName(m.byEmail) : '');
+  parts.push(byLine(m.byEmail));
   return `<button class="row" data-move="${m.id}"><span class="pill ${m.kind==='in'?'ok':''}">${fmtShort(m.date)}</span>
     <span class="main"><div class="name">${esc(it?.name||'удалено')}</div><div class="sub">${esc(parts.filter(Boolean).join(' · '))}</div></span>
     <span class="side"><strong class="money ${m.kind==='in'?'plus':'minus'}">${m.kind==='in'?'+':'−'}${num(m.qty)} ${esc(it?.unit||'')}</strong></span></button>`;
@@ -853,6 +887,7 @@ function moreView(){
     ${row('plan','План', soon ? `${soon} ${plural(soon,'дело','дела','дел')} на ближайшую неделю` : 'Обработки, окоты, заканчивающиеся корма')}
     ${row('money','Финансы','Доходы и расходы по месяцам')}
     ${row('stats','Сводка','Поголовье, приплод, молоко, деньги за год')}
+    <button class="row adm" data-tab-go="people" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Пользователи и имена</div><div class="sub">Чтобы в записях было видно, кто внёс</div></span><span class="side">›</span></button>
     <button class="row adm" data-tab-go="log" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Журнал изменений</div><div class="sub">Кто, когда и что внёс, изменил или удалил</div></span><span class="side">›</span></button>
     <button class="row adm" data-act="import" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Загрузка из Excel</div><div class="sub">Список животных по загонам из вашей таблицы</div></span><span class="side">›</span></button>
     <button class="row" data-act="excel" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Выгрузка в Excel</div><div class="sub">Стадо, окоты, корма, ГСМ, молоко, финансы за период</div></span><span class="side">›</span></button></div>`;
@@ -893,7 +928,7 @@ function moneyView(){
   if(!rows.length) return h + `<div class="empty"><p>За этот месяц записей нет. Покупки кормов и ГСМ с суммой и отгрузки молока с ценой попадают сюда сами.</p><button class="btn primary" data-act="add-fin">Добавить запись</button></div>`;
   return h + `<div class="list">` + rows.map(r => `<button class="row" data-fin="${r.id}">
     <span class="pill ${r.kind==='income'?'ok':'warn'}">${fmtShort(r.date)}</span>
-    <span class="main"><div class="name">${esc(r.category)}</div><div class="sub">${esc(r.note||'')}</div></span>
+    <span class="main"><div class="name">${esc(r.category)}</div><div class="sub">${esc([r.note, byLine(r.byEmail)].filter(Boolean).join(' · '))}</div></span>
     <span class="side"><strong class="money ${r.kind==='income'?'plus':'minus'}">${r.kind==='income'?'+':'−'}${money(+r.amount||0)}</strong></span></button>`).join('') + `</div>`;
 }
 
@@ -947,6 +982,7 @@ function bindView(){
   const v = $('#view'), on = (sel, fn) => v.querySelectorAll(sel).forEach(b => b.onclick = () => fn(b));
   const q = $('#q'); if(q) q.oninput = () => { S.q = q.value; render(); };
   const lw = $('#lg-who'); if(lw) lw.onchange = () => { logWho = lw.value; render(); };
+  bindPeople();
   on('[data-f]', b => { S.filter = b.dataset.f; if(!S.filter) S.q = ''; window.scrollTo(0,0); render(); });
   on('[data-hm]', b => { S.herdMode = b.dataset.hm; window.scrollTo(0,0); render(); });
   on('[data-nav]', b => { if(b.dataset.f2 != null) S.filter = b.dataset.f2; if(b.dataset.hm2) S.herdMode = b.dataset.hm2; S.tab = b.dataset.nav; window.scrollTo(0,0); render(); });
@@ -1111,7 +1147,7 @@ function evRow(e){
   if((e.animalIds||[]).length>1) bits.push(`группа ${e.animalIds.length} гол.`);
   if(e.note) bits.push(e.note);
   return `<button class="ev" data-ev="${e.id}"><span class="d">${fmtD(e.date)}</span>
-    <span><div class="t">${ET[e.type]?.t || 'Событие'}</div>${bits.length?`<div class="s">${esc(bits.join(' · '))}</div>`:''}${e.byEmail?`<span class="by">записал(а): ${esc(e.byEmail.split('@')[0])}</span>`:''}</span></button>`;
+    <span><div class="t">${ET[e.type]?.t || 'Событие'}</div>${bits.length?`<div class="s">${esc(bits.join(' · '))}</div>`:''}${byLine(e.byEmail, 'записал(а)') ? `<span class="by">${esc(byLine(e.byEmail, 'записал(а)'))}</span>` : ''}</span></button>`;
 }
 function spark(ws){
   const W=300, H=56, P=6, vals = ws.map(w => +w.weight), mn = Math.min(...vals), mx = Math.max(...vals), r = mx-mn || 1;
@@ -1483,7 +1519,7 @@ function moveForm(m){
     <div class="field" id="mv-pricew">${isEdit ? '' : `<label for="mv-price">Сумма, ₽ (попадёт в расходы)</label><input id="mv-price" name="price" type="number" min="0" step="1" inputmode="numeric">`}</div>
     <p class="err" id="mverr" hidden></p>
     <div class="actions"><button class="btn primary" type="submit">${isEdit?'Сохранить':'Записать'}</button></div>
-    ${isEdit ? `<p class="muted" style="margin:0">Внёс: ${esc(m.byEmail || '—')}${m.created ? ', ' + new Date(m.created).toLocaleString('ru-RU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}) : ''}</p><div class="actions"><button class="btn danger" type="button" id="mvdel">Удалить операцию</button></div><div id="mvdelc"></div>` : ''}
+    ${isEdit ? `${S.admin ? `<p class="muted" style="margin:0">Внёс: ${esc(m.byEmail ? whoName(m.byEmail) + ' (' + m.byEmail + ')' : '—')}${m.created ? ', ' + new Date(m.created).toLocaleString('ru-RU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}) : ''}</p>` : ''}<div class="actions"><button class="btn danger" type="button" id="mvdel">Удалить операцию</button></div><div id="mvdelc"></div>` : ''}
   </form>`;
   openSheet(isEdit ? 'Изменить операцию' : `${STOCK_FULL[cat]}: ${v.kind==='in' ? 'приход' : cat==='fuel' ? 'заправка' : 'расход'}`, body, s => {
     const f = s.querySelector('#mvf');
@@ -1954,7 +1990,7 @@ function xlSheets(from, to, secs){
     const rows = S.events.filter(e => e.type !== 'birth' && inP(e.date)).sort((a, b) => a.date.localeCompare(b.date)).map(e => {
       const ids = e.animalIds || [];
       return [e.date, ET[e.type]?.t || 'Событие', e.drug || '', e.dose || '', ids.length, ids.map(tagOf).filter(Boolean).join(', '),
-        e.type === 'weight' ? +e.weight : '', e.type === 'mating' ? tagOf(e.sireId) : '', e.nextDate || '', e.nextDate ? (e.doneNext ? 'да' : 'нет') : '', e.note || '', e.byEmail ? e.byEmail.split('@')[0] : ''];
+        e.type === 'weight' ? +e.weight : '', e.type === 'mating' ? tagOf(e.sireId) : '', e.nextDate || '', e.nextDate ? (e.doneNext ? 'да' : 'нет') : '', e.note || '', S.admin && e.byEmail ? whoName(e.byEmail) : ''];
     });
     out.push({name:'Ветеринария и события', title:'Ветеринария и события', note:period,
       cols:[{h:'Дата',w:12,t:'d'},{h:'Событие',w:22},{h:'Препарат',w:16},{h:'Доза',w:12},{h:'Голов',w:7,t:'i'},{h:'Бирки',w:30},{h:'Вес, кг',w:9,t:'n'},{h:'Производитель',w:12},{h:'Повтор',w:12,t:'d'},{h:'Повтор сделан',w:9},{h:'Заметка',w:24},{h:'Кто записал',w:12}],
@@ -2003,7 +2039,7 @@ function xlSheets(from, to, secs){
     out.push({name:X.n + ' — остатки', title:X.t + ': приход, расход, остаток', note:period, cols:bcols, rows:brows, total:btot});
     const kindName = {in:'Приход', out:cat === 'fuel' ? 'Заправка / расход' : 'Расход'};
     const orows = ops.filter(x => inP(x.date)).sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind)).map(x => [x.date, itemById(x.item)?.name || 'удалено', kindName[x.kind], x.kind === 'in' ? x.qty : -x.qty, itemById(x.item)?.unit || '',
-      ...(cat === 'fuel' ? [x.veh, x.who] : cat === 'vet' ? [x.who] : []), x.kind === 'in' ? x.note : '', x.kind === 'out' ? x.note : '', x.price === '' ? '' : +x.price, x.by ? whoName(x.by) : '']);
+      ...(cat === 'fuel' ? [x.veh, x.who] : cat === 'vet' ? [x.who] : []), x.kind === 'in' ? x.note : '', x.kind === 'out' ? x.note : '', x.price === '' ? '' : +x.price, S.admin && x.by ? whoName(x.by) : '']);
     const extra = cat === 'fuel' ? [{h:'Техника',w:22},{h:'Кто заправлял',w:16}] : cat === 'vet' ? [{h:'Кто выдал / применил',w:16}] : [];
     const cols = [{h:'Дата',w:12,t:'d'},{h:X.w,w:22},{h:'Операция',w:16},{h:'Количество',w:11,t:'n'},{h:'Ед.',w:6},...extra,{h:'От кого',w:22},{h:'Комментарий',w:24},{h:'Сумма',w:11,t:'m'},{h:'Кто записал',w:12}];
     const tot = cols.map((c, k) => c.t === 'm' ? sum(orows, k) : null); tot[0] = null;
