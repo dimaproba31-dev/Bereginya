@@ -199,7 +199,7 @@ const FIELD = {tag:'бирка', name:'кличка', species:'вид', sex:'п�
   motherId:'мать', fatherId:'отец', note:'заметка', outDate:'дата выбытия', since:'в загоне с', type:'событие', date:'дата', drug:'препарат', dose:'доза',
   nextDate:'повтор', doneNext:'повтор сделан', weight:'вес', sireId:'производитель', count:'приплод', animalIds:'животные', kind:'тип', qty:'количество',
   item:'позиция', vehicle:'транспорт', price:'сумма', amount:'сумма', category:'статья', liters:'литры', to:'получатель', extra:'общий надой', session:'дойка',
-  label:'назначение', ration:'рацион', items:'состав', mode:'норма', unit:'единица', plate:'госномер', trailer:'номер прицепа', vtype:'тип техники', gsm:'в ГСМ', who:'кто заправлял / выдал', expiry:'годен до', paused:'пауза', from:'с даты', skipped:'не списывать', locked:'исправлено вручную'};
+  label:'назначение', ration:'рацион', items:'состав', mode:'норма', unit:'единица', plate:'госномер', trailer:'номер прицепа', vtype:'тип техники', gsm:'в ГСМ', who:'кто заправлял / выдал', expiry:'годен до', series:'серия', number:'номер', paused:'пауза', from:'с даты', skipped:'не списывать', locked:'исправлено вручную'};
 function fmtVal(k, v, d){
   if(v===undefined || v===null || v==='' || v===DEL) return '—';
   if(k==='pen') return penShort(v) || '—';
@@ -805,7 +805,7 @@ function stockCatView(cat){
     h += `<div class="list">` + items.map(it => {
       const b = bal[it.id]||0, usedM = S.moves.filter(m => m.item===it.id && m.kind==='out' && (m.date||'').startsWith(mon)).reduce((a,m) => a + (+m.qty||0), 0);
       const exp = it.expiry ? daysBetween(today(), it.expiry) : null;
-      const sub2 = [usedM ? `расход за ${parse(mon+'-01').toLocaleDateString('ru-RU',{month:'long'})}: ${num(round(usedM,2))} ${it.unit}` : '', it.expiry ? `годен до ${fmtD(it.expiry)}` : ''].filter(Boolean).join(' · ') || it.unit;
+      const sub2 = [it.series ? `серия ${it.series}` : '', it.number ? `№ ${it.number}` : '', usedM ? `расход за ${parse(mon+'-01').toLocaleDateString('ru-RU',{month:'long'})}: ${num(round(usedM,2))} ${it.unit}` : '', it.expiry ? `годен до ${fmtD(it.expiry)}` : ''].filter(Boolean).join(' · ') || it.unit;
       const pill = b < 0 ? `<span class="pill bad">минус</span>` : b === 0 ? `<span class="pill warn">нет</span>` : exp != null && exp < 0 ? `<span class="pill bad">просрочен</span>` : exp != null && exp < 30 ? `<span class="pill warn">срок</span>` : '';
       return `<button class="row" data-item="${it.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(it.name)}</div><div class="sub">${esc(sub2)}</div></span>
         <span class="side"><strong class="${b<0?'money minus':''}">${num(b)} ${esc(it.unit)}</strong>${pill}</span></button>`;
@@ -1449,8 +1449,9 @@ function itemSheet(id){
   ].sort((a,b) => b.date.localeCompare(a.date) || b.sort-a.sort).slice(0, 60);
   const body = `<div class="stats"><div class="stat"><div class="v ${b<0?'money minus':''}">${num(b)}</div><div class="l">остаток, ${esc(it.unit)}</div></div>
       <div class="stat"><div class="v">${num(out30)}</div><div class="l">расход за 30 дней, ${esc(it.unit)}</div></div></div>
+    ${[['Серия', it.series], ['Номер', it.number], ['Годен до', it.expiry ? fmtD(it.expiry) : '']].some(x => x[1]) ? `<div class="panel">${[['Серия', it.series], ['Номер', it.number], ['Годен до', it.expiry ? fmtD(it.expiry) : '']].filter(x => x[1]).map(([k,x]) => `<div class="kv"><span>${k}</span><strong>${esc(x)}</strong></div>`).join('')}</div>` : ''}
     <div class="actions"><button class="btn primary" data-k="in">Приход</button><button class="btn" data-k="out">Расход</button></div>
-    <div class="actions"><button class="btn adm" id="iedit">Переименовать</button><button class="btn danger adm" id="idel">Удалить</button></div><div id="idelc"></div>
+    <div class="actions"><button class="btn adm" id="iedit">Изменить</button><button class="btn danger adm" id="idel">Удалить</button></div><div id="idelc"></div>
     ${hist.length ? `<div class="list">${hist.map(h => h.html).join('')}</div>` : `<div class="empty"><p>Операций пока нет.</p></div>`}`;
   openSheet(it.name, body, s => {
     s.querySelectorAll('[data-k]').forEach(b2 => b2.onclick = () => moveForm({cat:it.cat, kind:b2.dataset.k, item:id}));
@@ -1474,7 +1475,10 @@ function itemForm(it){
       ${fld('it-note','Заметка',`<input id="it-note" name="note" value="${esc(v.note)}" placeholder="напр. кто закреплён" autocomplete="off">`)}
       <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="it-gsm" ${v.gsm === false ? '' : 'checked'}><span>В ГСМ — можно выбрать при заправке</span></label>`
     : `${fld('it-unit','Единица',`<select id="it-unit" name="unit">${units.map(u => opt(u,u,v.unit)).join('')}</select>`)}
-      ${v.cat==='vet' ? fld('it-exp','Годен до (необязательно)',`<input id="it-exp" type="date" name="expiry" value="${esc(v.expiry)}">`) : ''}`}
+      ${v.cat==='vet' ? `<div class="two">${fld('it-series','Серия',`<input id="it-series" name="series" value="${esc(v.series)}" autocomplete="off">`)}${fld('it-number','Номер',`<input id="it-number" name="number" value="${esc(v.number)}" autocomplete="off">`)}</div>
+        ${fld('it-exp','Годен до (необязательно)',`<input id="it-exp" type="date" name="expiry" value="${esc(v.expiry)}">`)}` : ''}
+      ${!isEdit ? `<div class="two">${fld('it-qty','Количество',`<input id="it-qty" name="qty0" inputmode="decimal" autocomplete="off" placeholder="сколько есть">`)}${fld('it-date','Дата прихода',`<input id="it-date" type="date" name="date0" value="${today()}">`)}</div>
+        <p class="muted" style="margin:0">Количество запишется приходом. Можно оставить пустым и внести приход позже.</p>` : ''}`}
     <p class="err" id="iterr" hidden></p>
     <div class="actions"><button class="btn primary" type="submit">${isEdit?'Сохранить':'Добавить'}</button></div>
     ${isEdit ? `<div class="actions"><button class="btn danger" type="button" id="itdel">Удалить</button></div><div id="itdelc"></div>` : ''}
@@ -1485,7 +1489,10 @@ function itemForm(it){
       ev.preventDefault(); const d = Object.fromEntries(new FormData(f)); for(const k in d) d[k] = String(d[k]).trim();
       if(!d.name){ const e = s.querySelector('#iterr'); e.hidden = false; e.textContent = 'Укажите название.'; return; }
       if(isVeh){ d.gsm = s.querySelector('#it-gsm').checked; d.unit = ''; }
-      if(isEdit) store.set('items', it.id, {...strip(it), ...d}); else store.add('items', {...d, cat:v.cat});
+      const q0 = dec(d.qty0 || ''), date0 = d.date0 || today(); delete d.qty0; delete d.date0;
+      if(!isVeh && String(f.querySelector('#it-qty')?.value || '').trim() && !(q0 > 0)){ const e = s.querySelector('#iterr'); e.hidden = false; e.textContent = 'Количество — число больше нуля.'; return; }
+      if(isEdit) store.set('items', it.id, {...strip(it), ...d});
+      else { const nid = store.add('items', {...d, cat:v.cat}); if(q0 > 0) store.add('moves', {item:nid, kind:'in', qty:round(q0,3), date:date0, note:'начальный остаток'}); }
       toast('Сохранено'); closeSheet();
     };
     const del = s.querySelector('#itdel');
@@ -2026,14 +2033,14 @@ function xlSheets(from, to, secs){
       const pout = round(inn.filter(x => x.kind === 'out').reduce((s, x) => s + x.qty, 0), 3);
       const pauto = round(inn.filter(x => x.kind === 'auto').reduce((s, x) => s + x.qty, 0), 3);
       const end = round(start + pin - pout - pauto, 3), u = use[it.id] || 0;
-      const r = [it.name, it.unit, start, pin, pout];
+      const r = [it.name, ...(cat === 'vet' ? [it.series || '', it.number || '', it.expiry || ''] : []), it.unit, start, pin, pout];
       r.push(end);
       r.push(round(inn.filter(x => x.kind === 'in').reduce((s, x) => s + (+x.price || 0), 0), 2) || '');
       return r;
     });
     const brows = bal();
     const bcols = cat !== 'fuel'
-      ? [{h:X.w,w:22},{h:'Ед.',w:6},{h:'Остаток на начало',w:12,t:'n'},{h:'Приход',w:11,t:'n'},{h:'Расход',w:11,t:'n'},{h:'Остаток на конец',w:12,t:'n'},{h:'Закуплено на сумму',w:13,t:'m'}]
+      ? [{h:X.w,w:22},...(cat === 'vet' ? [{h:'Серия',w:12},{h:'Номер',w:12},{h:'Годен до',w:12,t:'d'}] : []),{h:'Ед.',w:6},{h:'Остаток на начало',w:12,t:'n'},{h:'Приход',w:11,t:'n'},{h:'Расход',w:11,t:'n'},{h:'Остаток на конец',w:12,t:'n'},{h:'Закуплено на сумму',w:13,t:'m'}]
       : [{h:'Топливо, масла',w:22},{h:'Ед.',w:6},{h:'Остаток на начало',w:12,t:'n'},{h:'Приход',w:11,t:'n'},{h:'Расход',w:11,t:'n'},{h:'Остаток на конец',w:12,t:'n'},{h:'Закуплено на сумму',w:13,t:'m'}];
     const btot = bcols.map((c, i) => c.t === 'm' ? sum(brows, i) : null); btot[0] = null;
     out.push({name:X.n + ' — остатки', title:X.t + ': приход, расход, остаток', note:period, cols:bcols, rows:brows, total:btot});
