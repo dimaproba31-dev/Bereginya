@@ -27,7 +27,7 @@ const YOUNG = {sheep:'ягнёнок', goat:'козлёнок'};
 const GESTATION = {sheep:147, goat:150};
 const STATUS = {active:'В стаде', sold:'Продан(а)', slaughter:'Забой', dead:'Пал(а)'};
 const ET = {
-  ill:{t:'Лечение', vet:1}, vac:{t:'Вакцинация', vet:1}, treat:{t:'Дегельминтизация', vet:1}, birth:{t:'Окот'},
+  ill:{t:'Лечение', vet:1}, vac:{t:'Вакцинация', vet:1}, treat:{t:'Дегельминтизация', vet:1}, vit:{t:'Витаминизация', vet:1}, birth:{t:'Окот'},
   weight:{t:'Взвешивание'}, mating:{t:'Случка'}, shear:{t:'Стрижка'}, other:{t:'Другое'},
   dose:{t:'Процедура по схеме', hide:1}, result:{t:'Результат лечения', hide:1}
 };
@@ -584,11 +584,17 @@ function homeView(){
       <button class="qbtn" data-act="milkquick">${ico('milk')}<span>Записать надой</span></button>
       <button class="qbtn" data-act="add-animal">${ico('plus')}<span>Добавить животное</span></button>
       <button class="qbtn" data-act="q-birth">${ico('birth')}<span>Записать окот</span></button>
-      <button class="qbtn" data-tab-go="vet">${ico('vet')}<span>Лечение, прививки</span></button>
       <button class="qbtn" data-act="q-feed">${ico('feed')}<span>Приход корма</span></button>
       <button class="qbtn" data-act="q-fuel">${ico('fuel')}<span>Выдать топливо</span></button>
       <button class="qbtn" data-act="milkout">${ico('truck')}<span>Отгрузка молока</span></button>
       <button class="qbtn" data-nav="herd" data-hm2="pens">${ico('move')}<span>Перевести по загонам</span></button>
+    </div>
+    <div class="kv"><h2 class="sec">Ветеринария</h2><button class="link" data-tab-go="vet">Схемы и курсы</button></div>
+    <div class="qgrid">
+      <button class="qbtn" data-vnew="ill">${ico('vet')}<span>Добавить лечение</span></button>
+      <button class="qbtn" data-vnew="vac">${ico('vet')}<span>Добавить вакцинацию</span></button>
+      <button class="qbtn" data-vnew="vit">${ico('vet')}<span>Добавить витамини&shy;зацию</span></button>
+      <button class="qbtn" data-vnew="treat">${ico('vet')}<span>Добавить дегельмин&shy;тизацию</span></button>
     </div>`;
   if(soon.length) h += `<div class="kv"><h2 class="sec">Ближайшие дела</h2><button class="link" data-nav="plan">Все</button></div>
     <div class="plan">${soon.slice(0,3).map(it => { const d = daysBetween(t, it.date); return `<div class="task ${urgency(it.date)}"><div class="when"><b>${fmtShort(it.date).split(' ')[0]}</b>${fmtShort(it.date).split(' ')[1]||''}</div><div class="what"><div class="t">${esc(it.title)}</div><div class="s">${esc(it.sub)} · ${d<0?'просрочено':d===0?'сегодня':'через '+d+' '+plural(d,'день','дня','дней')}</div></div></div>`; }).join('')}</div>`;
@@ -1101,9 +1107,9 @@ function askConfirm(holder, text, onYes, yesLabel){
 }
 
 /* ===== Ветеринария: схемы, курсы по дням, результат ===== */
-const SCHEME_KIND = {ill:'Лечение', vac:'Вакцинация', deworm:'Дегельминтизация'};
-const KIND_OF_TYPE = {ill:'ill', vac:'vac', treat:'deworm'};
-const TYPE_OF_KIND = {ill:'ill', vac:'vac', deworm:'treat'};
+const SCHEME_KIND = {ill:'Лечение', vac:'Вакцинация', deworm:'Дегельминтизация', vit:'Витаминизация'};
+const KIND_OF_TYPE = {ill:'ill', vac:'vac', treat:'deworm', vit:'vit'};
+const TYPE_OF_KIND = {ill:'ill', vac:'vac', deworm:'treat', vit:'vit'};
 const ROUTES = ['в/м','п/к','в/в','внутрь','наружно','интрацистернально','интраназально','в/матку'];
 const RESULT = {ok:'Здорово', repeat:'Повторить схему', switch:'Другая схема', dead:'Пало / выбраковано'};
 const schemes = () => setting('schemes')?.list || [];
@@ -1150,7 +1156,7 @@ function vetView(){
   let h = `<button class="back" data-nav="herd">‹ Стадо</button><h2 class="page">Ветеринария</h2>`;
   if(loading('events', 'settings')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
   const tasks = vetTasks(), act = activeCourses(), sub = S.vetSub || 'today';
-  h += `<div class="actions"><button class="btn primary" data-vnew="ill">Лечение</button><button class="btn" data-vnew="vac">Вакцинация</button><button class="btn" data-vnew="treat">Дегельминтизация</button></div>`;
+  h += `<div class="actions"><button class="btn primary" data-vnew="ill">Лечение</button><button class="btn" data-vnew="vac">Вакцинация</button><button class="btn" data-vnew="treat">Дегельминтизация</button><button class="btn" data-vnew="vit">Витаминизация</button></div>`;
   h += `<div class="segb" role="group">${[['today', `Сегодня${tasks.length ? ' · ' + tasks.length : ''}`], ['courses', `Курсы${act.length ? ' · ' + act.length : ''}`], ['schemes', 'Схемы']].map(([k, l]) => `<button data-vsub="${k}" aria-pressed="${sub === k}">${l}</button>`).join('')}</div>`;
   if(sub === 'today'){
     if(!tasks.length) return h + `<div class="empty"><p>На сегодня процедур нет.${act.length ? ` Идёт курсов: ${act.length}.` : ''}</p><p class="muted">Назначьте лечение кнопкой выше — по схеме приложение само будет показывать, кого и чем колоть каждый день, а в день оценки спросит результат.</p></div>`;
@@ -1344,7 +1350,7 @@ function animalCard(id){
     <div style="display:flex;align-items:center;gap:14px"><span class="tag big">${esc(a.tag)}</span>
       <div style="min-width:0"><div class="title-lg">${esc(animalTitle(a))} ${sexIcon(a.sex)}</div>
       <div class="muted">${a.status==='active' ? `<span class="pill ok">В стаде</span>` : `<span class="pill">${STATUS[a.status]}${a.outDate?' · '+fmtD(a.outDate):''}</span>`}</div></div></div>
-    <div class="evbtns">${a.status==='active' ? `${a.sex==='f' ? `<button class="btn ${planItems().some(i => i.kind==='birth' && i.animal.id===id) ? 'primary' : ''}" data-cev="birth">Окот</button>` : ''}<button class="btn" data-cev="ill">Лечение</button><button class="btn" data-cev="vac">Вакцинация</button><button class="btn" data-cev="treat">Дегельминтизация</button><button class="btn" data-cev="">Другое…</button>` : ''}<button class="btn" id="edit">Изменить</button></div>
+    <div class="evbtns">${a.status==='active' ? `${a.sex==='f' ? `<button class="btn ${planItems().some(i => i.kind==='birth' && i.animal.id===id) ? 'primary' : ''}" data-cev="birth">Окот</button>` : ''}<button class="btn" data-cev="ill">Лечение</button><button class="btn" data-cev="vac">Вакцинация</button><button class="btn" data-cev="treat">Дегельминтизация</button><button class="btn" data-cev="vit">Витаминизация</button><button class="btn" data-cev="">Другое…</button>` : ''}<button class="btn" id="edit">Изменить</button></div>
     ${(() => { const cs = activeCourses().filter(c => c.animals.includes(id)); return cs.length ? `<div class="panel"><div class="eyebrow">Сейчас</div>${cs.map(c => `<button class="row" data-course="${c.e.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(c.sc.name)}</div><div class="sub">${SCHEME_KIND[c.sc.kind]} · день ${Math.min(c.dayNow, c.check || c.last)} из ${c.check || c.last}${c.pending.length ? ' · сегодня: ' + esc(c.pending.at(-1).steps.map(stepShort).join(' + ')) : c.needResult ? ' · пора оценить результат' : ''}</div></span><span class="side">›</span></button>`).join('')}</div>` : ''; })()}
     <dl class="facts">
       <div><dt>Загон</dt><dd>${a.pen && PEN[a.pen] ? `<button class="link" data-pen-go="${a.pen}">${esc(penLong(a.pen))}</button>${a.since ? `<span class="muted" style="display:block">с ${fmtD(a.since)}</span>` : ''}` : '—'}</dd></div>
