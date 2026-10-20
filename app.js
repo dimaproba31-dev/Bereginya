@@ -113,7 +113,8 @@ const byId = id => S.animals.find(a => a.id === id);
 const inPen = pid => S.animals.filter(a => a.status==='active' && (a.pen||'') === pid);
 const itemById = id => S.items.find(i => i.id === id);
 const rationById = id => S.rations.find(r => r.id === id);
-const penRation = pid => rationById(S.pens.find(p => p.id === pid)?.ration);
+const RATIONS_ON = false;
+const penRation = pid => !RATIONS_ON ? null : rationById(S.pens.find(p => p.id === pid)?.ration);
 const setting = id => S.settings.find(s => s.id === id);
 const animalLabel = a => a ? `№${a.tag}${a.name?` «${a.name}»`:''}` : 'удалено';
 const animalTitle = a => a.name || (adult(a) ? (a.sex==='m' ? MALE[a.species] : SPECIES[a.species]) : YOUNG[a.species][0].toUpperCase()+YOUNG[a.species].slice(1));
@@ -332,8 +333,10 @@ let rq = 0;
 function scheduleRender(){ if(rq) return; rq = requestAnimationFrame(() => { rq = 0; render(); refreshSheet(); }); }
 
 /* ===== Корма: суточный расход по рационам и остатки ===== */
+// Рационы и автосписание отключены: корма списываются только записями «Расход» на складе
 function feedUse(){
   const use = {}, perPen = {};
+  if(!RATIONS_ON) return {use, perPen};
   for(const p of PENS){
     const r = penRation(p.id); if(!r) continue;
     const n = inPen(p.id).length; if(!n) continue;
@@ -352,7 +355,6 @@ function stockBalance(){
   const bal = {};
   S.items.forEach(i => bal[i.id] = 0);
   S.moves.forEach(m => { bal[m.item] = (bal[m.item]||0) + (m.kind==='in' ? 1 : -1) * (+m.qty||0); });
-  S.feedauto.forEach(d => { if(d.skipped) return; for(const [k,q] of Object.entries(d.items||{})) bal[k] = (bal[k]||0) - (+q||0); });
   for(const k in bal) bal[k] = round(bal[k], 2);
   return bal;
 }
@@ -363,6 +365,7 @@ let feedTimer = 0;
 function scheduleFeed(){ clearTimeout(feedTimer); feedTimer = setTimeout(processFeed, 1200); }
 function processFeed(){ silently(processFeedInner); }
 function processFeedInner(){
+  if(!RATIONS_ON){ purgeRations(); return; }
   if(S.mode!=='live' || !ready('animals','pens','rations','feedauto','settings','items')) return;
   const st = setting('feed'); if(!st || !st.from || st.paused) return;
   const t = today(), {use} = feedUse(), has = Object.keys(use).length > 0;
@@ -372,6 +375,16 @@ function processFeedInner(){
     if(!ex){ if(has){ store.set('feedauto', id, {date:d, items:use}); n++; } }
     else if(S.admin && d===t && !ex.locked && !ex.skipped && !sameMap(ex.items||{}, use)){ store.set('feedauto', id, {...strip(ex), items:use}); n++; }
   }
+}
+function purgeRations(){
+  if(S.mode!=='live' || !S.admin || !ready('pens','rations','feedauto','settings')) return;
+  const nf = S.feedauto.length, nr = S.rations.length, pens = S.pens.filter(p => p.ration);
+  if(!nf && !nr && !pens.length && !setting('feed')) return;
+  S.feedauto.forEach(d => store.del('feedauto', d.id));
+  S.rations.forEach(r => store.del('rations', r.id));
+  pens.forEach(p => store.merge('pens', p.id, {ration:DEL}));
+  if(setting('feed')) store.del('settings', 'feed');
+  if(nf || nr) journalNote(`Рационы отключены: удалено рационов ${nr}, дней автосписания ${nf}. Остатки кормов считаются только по приходу и расходу.`);
 }
 // Автоперевод молодняка: явно записанная группа «Молодняк» после 4 месяцев меняется в базе
 let groupTimer = 0;
@@ -556,7 +569,7 @@ function homeView(){
     <div class="stiles">
       ${stat('herd', 'Поголовье', act.length, `овец ${act.filter(a=>a.species==='sheep').length} · коз ${act.filter(a=>a.species==='goat').length}`)}
       ${stat('milk', 'Надой сегодня', `${num(milkDay)} <small>л</small>`, milkDay ? 'нажмите, чтобы посмотреть' : 'ещё не записан')}
-      ${stat('stock', 'Корма', low ? `${Math.max(low.d,0)} <small>дн.</small>` : '—', low ? (low.d < 10 ? `мало: ${esc(low.i.name)}` : 'хватит надолго') : 'рационы не назначены', low && low.d < 10 ? 'warn' : '')}
+      ${(() => { const fi = S.items.filter(i => i.cat==='feed'), neg = fi.filter(i => (bal[i.id]||0) < 0); return stat('stock', 'Корма', `${fi.length} <small>поз.</small>`, neg.length ? `в минусе: ${esc(neg[0].name)}${neg.length > 1 ? ' и ещё ' + (neg.length - 1) : ''}` : fi.length ? 'остатки на складе' : 'склад пуст', neg.length ? 'warn' : ''); })()}
       ${stat('plan', 'Дела на неделю', soon.length, soon.length ? 'есть что сделать' : 'всё спокойно', soon.some(i => daysBetween(t, i.date) < 0) ? 'warn' : '')}
     </div>
     <h2 class="sec">Быстрые действия</h2>
@@ -678,14 +691,6 @@ function pensView(){
           <b>${p.n}</b><span>${n ? `${n} гол.` : 'пусто'}</span>${penLabel(p.id) ? `<em>${esc(penLabel(p.id))}</em>` : ''}${r ? `<i>${esc(r.name.replace(/^рацион\s*/i, ''))}</i>` : ''}</button>`;
       }).join('')}</div></section>`;
   }
-  h += `<div class="barn-head"><h2>Рационы</h2><button class="btn small adm" data-act="add-ration">Новый рацион</button></div>`;
-  if(!S.rations.length) h += `<div class="empty"><p>Рацион — это норма кормов на голову или на загон в сутки. Назначьте его загонам, и корм будет каждый день списываться со склада сам.</p></div>`;
-  else h += `<div class="list">` + S.rations.slice().sort((a,b) => a.name.localeCompare(b.name,'ru')).map(r => {
-    const pens = S.pens.filter(p => p.ration===r.id && PEN[p.id]).map(p => p.id);
-    const n = pens.reduce((s,id) => s + (perPen[id]?.heads||0), 0);
-    return `<button class="row" data-ration="${r.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(r.name)}</div><div class="sub">${esc(rationText(r))}</div></span>
-      <span class="side"><strong>${pens.length} ${plural(pens.length,'загон','загона','загонов')}</strong>${heads(n)}</span></button>`;
-  }).join('') + `</div>`;
   return h;
 }
 
@@ -749,7 +754,7 @@ function stockView(){
   if(cat==='fuel') return h + fuelView();
   const items = S.items.filter(i => i.cat===cat).sort((a,b) => a.name.localeCompare(b.name,'ru'));
   if(!items.length) return h + `<div class="empty"><h2>${cat==='feed'?'Корма':'Топливо и масла'} не добавлены</h2>
-    <p>${cat==='feed' ? 'Добавьте корма, которые храните: сено, зерно, комбикорм. Потом вносите приход, а расход по рационам спишется сам.' : 'Добавьте виды топлива: дизель, бензин, масло. Потом вносите заправки и выдачу на технику.'}</p>
+    <p>${cat==='feed' ? 'Добавьте корма, которые храните: сено, зерно, комбикорм. Потом вносите приход и расход.' : 'Добавьте виды топлива: дизель, бензин, масло. Потом вносите заправки и выдачу на технику.'}</p>
     <div class="actions"><button class="btn primary adm" data-act="seed-items">Добавить типовой список</button><button class="btn adm" data-act="add-item">Своя позиция</button></div></div>`;
   const bal = stockBalance(), {use} = feedUse();
   h += `<div class="actions"><button class="btn primary" data-mv="in">Приход</button><button class="btn" data-mv="out">${cat==='fuel'?'Выдача / расход':'Расход'}</button></div>`;
@@ -757,17 +762,9 @@ function stockView(){
     const b = bal[it.id]||0, u = cat==='feed' ? use[it.id] : 0, days = u > 0 ? Math.floor(b/u) : null;
     const pill = b < 0 ? `<span class="pill bad">минус</span>` : days!=null && days < 10 ? `<span class="pill ${days<4?'bad':'warn'}">на ${days} ${plural(days,'день','дня','дней')}</span>` : '';
     return `<button class="row" data-item="${it.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(it.name)}</div>
-      <div class="sub">${u ? `расход ${num(u)} ${esc(it.unit)}/сут${days!=null && days>=10 ? ` · хватит на ${days} дн.` : ''}` : cat==='feed' ? 'не входит в рационы' : esc(it.unit)}</div></span>
+      <div class="sub">${u ? `расход ${num(u)} ${esc(it.unit)}/сут${days!=null && days>=10 ? ` · хватит на ${days} дн.` : ''}` : esc(it.unit)}</div></span>
       <span class="side"><strong class="${b<0?'money minus':''}">${num(b)} ${esc(it.unit)}</strong>${pill}</span></button>`;
   }).join('') + `</div><button class="link adm" data-act="add-item">+ Добавить позицию</button>`;
-  if(cat==='feed'){
-    const st = setting('feed'), any = Object.keys(use).length;
-    h += `<div class="panel"><div class="eyebrow">Ежедневное списание по рационам</div>
-      ${any ? Object.entries(use).map(([id,q]) => `<div class="kv"><span>${esc(itemById(id)?.name||'удалён')}</span><strong>${num(q)} ${esc(itemById(id)?.unit||'')}/сут</strong></div>`).join('')
-            : `<p class="muted">Назначьте рационы загонам в разделе «Загоны» — корм будет списываться со склада каждый день сам.</p>`}
-      <p class="muted">${st?.paused ? 'Списание приостановлено.' : st?.from ? `Списывается каждый день с ${fmtD(st.from)}.` : 'Включится при назначении первого рациона.'}</p>
-      <div class="actions"><button class="btn small" data-act="feed-log">Журнал списаний</button>${st?.from ? `<button class="btn small adm" data-act="feed-pause">${st.paused?'Возобновить':'Приостановить'}</button>` : ''}</div></div>`;
-  }
   h += `<button class="link view-link" data-act="excel" data-sec="${cat}">Выгрузить ${cat==='feed'?'склад кормов':'ГСМ'} в Excel</button>`;
   const hist = S.moves.filter(m => itemById(m.item)?.cat===cat).sort((a,b) => b.date.localeCompare(a.date) || (b.created||0)-(a.created||0)).slice(0, 30);
   if(hist.length) h += `<div><div class="eyebrow">Последние операции</div></div><div class="list">` + hist.map(moveRow).join('') + `</div>`;
@@ -1053,7 +1050,6 @@ function animalCard(id){
       <div><dt>Отец</dt><dd>${link(dad, a.fatherText)}</dd></div>
       <div><dt>Последний вес</dt><dd>${w?`${num(w.weight)} кг · ${fmtShort(w.date)}`:'—'}</dd></div>
       ${a.sex==='f' ? `<div><dt>Надой, 7 дней</dt><dd>${mk ? `${num(mk.avg,2)} л/сут` : '—'}</dd></div>` : `<div><dt>Потомков</dt><dd>${kids.length}</dd></div>`}
-      <div><dt>Рацион по файлу</dt><dd>${esc(a.rationNo || '—')}</dd></div>
     </dl>
     ${a.note?`<p class="muted" style="margin:0">${esc(a.note)}</p>`:''}
     ${a.sex==='f' && adult(a) ? `<div class="panel"><div class="kv"><span class="eyebrow">Последний окот</span>${lb?`<span class="muted">всего окотов: ${lb.total}</span>`:''}</div>
@@ -1271,9 +1267,7 @@ function penSheet(pid){
   const r = isPen ? penRation(pid) : null, pu = isPen ? feedUse().perPen[pid] : null;
   const body = `
     ${isPen ? `${fld('p-label','Назначение загона',`<input id="p-label" value="${esc(penLabel(pid))}" placeholder="напр. Дойные 2-разовые" autocomplete="off">`)}
-      ${fld('p-ration','Рацион загона',`<select id="p-ration">${opt('','— без рациона —', r?.id||'')}${S.rations.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')).map(x => opt(x.id, x.name, r?.id)).join('')}</select>`)}
-      ${r ? `<div class="panel"><div class="eyebrow">Расход в сутки · ${heads(list.length)}</div>${pu ? Object.entries(pu.use).map(([id,q]) => `<div class="kv"><span>${esc(itemById(id)?.name||'удалён')}</span><strong>${num(q)} ${esc(itemById(id)?.unit||'')}</strong></div>`).join('') : '<p class="muted" style="margin:0">Загон пуст — корм не списывается.</p>'}</div>` : ''}
-      ${!S.rations.length ? `<p class="muted" style="margin:0">Рационов пока нет. <button class="link" id="newRation">Создать рацион</button></p>` : ''}` : ''}
+` : ''}
     <div class="kv"><span class="eyebrow">Животные · ${list.length}</span>${list.length ? `<button class="link" id="pall">Отметить всех</button>` : ''}</div>
     ${list.length ? `<div class="list scroll">${list.map(a => `<label class="row pickrow"><input type="checkbox" name="pm" value="${a.id}"><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'} · ${esc(age(a.birth)||SPECIES[a.species])}</span></label>`).join('')}</div>
       <div class="movebar">${fld('p-to','Переместить отмеченных в',`<select id="p-to">${penOptions('', '— выберите загон —')}</select>`)}<button class="btn primary" id="pmove" disabled>Переместить</button></div>`
@@ -1380,13 +1374,13 @@ function deleteItemBox(holder, it){
 }
 function itemSheet(id){
   const it = itemById(id); if(!it) return;
-  const b = stockBalance()[id]||0, u = feedUse().use[id];
+  const b = stockBalance()[id]||0, from30 = addDays(today(), -29);
+  const out30 = round(S.moves.filter(m => m.item===id && m.kind==='out' && m.date >= from30).reduce((x, m) => x + (+m.qty||0), 0), 2);
   const hist = [
     ...S.moves.filter(m => m.item===id).map(m => ({date:m.date, sort:m.created||0, html:moveRow(m)})),
-    ...S.feedauto.filter(d => d.items && d.items[id] && !d.skipped).map(d => ({date:d.date, sort:0, html:`<button class="row" data-day="${d.id}"><span class="pill">${fmtShort(d.date)}</span><span class="main"><div class="name">По рационам</div><div class="sub">автосписание${d.locked?' · изменено вручную':''}</div></span><span class="side"><strong class="money minus">−${num(d.items[id])} ${esc(it.unit)}</strong></span></button>`}))
   ].sort((a,b) => b.date.localeCompare(a.date) || b.sort-a.sort).slice(0, 60);
   const body = `<div class="stats"><div class="stat"><div class="v ${b<0?'money minus':''}">${num(b)}</div><div class="l">остаток, ${esc(it.unit)}</div></div>
-      <div class="stat"><div class="v">${u ? num(u) : '—'}</div><div class="l">${u ? `расход в сутки${b>0?` · на ${Math.floor(b/u)} дн.`:''}` : it.cat==='feed' ? 'нет в рационах' : 'ГСМ'}</div></div></div>
+      <div class="stat"><div class="v">${num(out30)}</div><div class="l">расход за 30 дней, ${esc(it.unit)}</div></div></div>
     <div class="actions"><button class="btn primary" data-k="in">Приход</button><button class="btn" data-k="out">Расход</button></div>
     <div class="actions"><button class="btn adm" id="iedit">Переименовать</button><button class="btn danger adm" id="idel">Удалить</button></div><div id="idelc"></div>
     ${hist.length ? `<div class="list">${hist.map(h => h.html).join('')}</div>` : `<div class="empty"><p>Операций пока нет.</p></div>`}`;
@@ -1867,7 +1861,7 @@ ${sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" Co
 
 /* ----- Что попадает в файл ----- */
 const XL_SECTIONS = {
-  herd:'Стадо (все животные)', births:'Окоты и приплод', events:'Ветеринария и события', pens:'Загоны и рационы',
+  herd:'Стадо (все животные)', births:'Окоты и приплод', events:'Ветеринария и события', pens:'Загоны',
   feed:'Склад кормов', fuel:'ГСМ', milk:'Молоко по дням', milkHeads:'Надои по головам', milkOut:'Отгрузки молока', finance:'Финансы'
 };
 function xlSheets(from, to, secs){
@@ -1922,11 +1916,10 @@ function xlSheets(from, to, secs){
     const rows = PENS.map(p => {
       const an = inPen(p.id), r = penRation(p.id), u = perPen[p.id]?.use || {};
       return [p.barn.name, p.n, penLabel(p.id), an.length, an.filter(a => a.species === 'sheep').length, an.filter(a => a.species === 'goat').length,
-        an.filter(a => a.sex === 'f' && adult(a)).length, an.filter(a => !adult(a)).length, r?.name || '', r ? rationText(r) : '',
-        Object.entries(u).map(([id, q]) => `${itemById(id)?.name || '?'} ${num(q)} ${itemById(id)?.unit || ''}`).join('; '), an.sort(tagSort).map(a => a.tag).join(', ')];
+        an.filter(a => a.sex === 'f' && adult(a)).length, an.filter(a => !adult(a)).length, an.sort(tagSort).map(a => a.tag).join(', ')];
     });
-    out.push({name:'Загоны', title:'Загоны и рационы', note:`На ${fmtD(today())}`,
-      cols:[{h:'Помещение',w:12},{h:'Загон',w:7},{h:'Назначение',w:22},{h:'Голов',w:7,t:'i'},{h:'Овец',w:7,t:'i'},{h:'Коз',w:7,t:'i'},{h:'Маток',w:7,t:'i'},{h:'Молодняк',w:9,t:'i'},{h:'Рацион',w:16},{h:'Норма',w:34},{h:'Расход в сутки',w:30},{h:'Бирки',w:40}],
+    out.push({name:'Загоны', title:'Загоны', note:`На ${fmtD(today())}`,
+      cols:[{h:'Помещение',w:12},{h:'Загон',w:7},{h:'Назначение',w:22},{h:'Голов',w:7,t:'i'},{h:'Овец',w:7,t:'i'},{h:'Коз',w:7,t:'i'},{h:'Маток',w:7,t:'i'},{h:'Молодняк',w:9,t:'i'},{h:'Бирки',w:60}],
       rows, total:[null, '', '', sum(rows, 3), sum(rows, 4), sum(rows, 5), sum(rows, 6), sum(rows, 7)]});
   }
   for(const cat of ['feed', 'fuel']){
@@ -1934,7 +1927,6 @@ function xlSheets(from, to, secs){
     const items = S.items.filter(i => i.cat === cat).sort((a, b) => a.name.localeCompare(b.name, 'ru')), {use} = feedUse();
     const ops = [];
     S.moves.filter(m => itemById(m.item)?.cat === cat).forEach(m => ops.push({date:m.date, item:m.item, kind:m.kind, qty:+m.qty || 0, note:[vehLabel(itemById(m.vehicle)), m.note].filter(Boolean).join(' · '), price:m.price || '', by:m.byEmail}));
-    if(cat === 'feed') S.feedauto.filter(d => !d.skipped).forEach(d => Object.entries(d.items || {}).forEach(([id, q]) => ops.push({date:d.date, item:id, kind:'auto', qty:+q || 0, note:d.locked ? 'исправлено вручную' : '', price:''})));
     const bal = rows => items.map(it => {
       const o = ops.filter(x => x.item === it.id), before = o.filter(x => x.date < from), inn = o.filter(x => inP(x.date));
       const start = round(before.reduce((s, x) => s + (x.kind === 'in' ? x.qty : -x.qty), 0), 3);
@@ -1943,15 +1935,13 @@ function xlSheets(from, to, secs){
       const pauto = round(inn.filter(x => x.kind === 'auto').reduce((s, x) => s + x.qty, 0), 3);
       const end = round(start + pin - pout - pauto, 3), u = use[it.id] || 0;
       const r = [it.name, it.unit, start, pin, pout];
-      if(cat === 'feed') r.push(pauto);
       r.push(end);
-      if(cat === 'feed') r.push(u || '', u ? Math.floor((stockBalance()[it.id] || 0) / u) : '');
       r.push(round(inn.filter(x => x.kind === 'in').reduce((s, x) => s + (+x.price || 0), 0), 2) || '');
       return r;
     });
     const brows = bal();
     const bcols = cat === 'feed'
-      ? [{h:'Корм',w:22},{h:'Ед.',w:6},{h:'Остаток на начало',w:12,t:'n'},{h:'Приход',w:11,t:'n'},{h:'Расход вручную',w:11,t:'n'},{h:'Списано по рационам',w:12,t:'n'},{h:'Остаток на конец',w:12,t:'n'},{h:'Расход в сутки сейчас',w:12,t:'n'},{h:'Хватит, дней',w:9,t:'i'},{h:'Закуплено на сумму',w:13,t:'m'}]
+      ? [{h:'Корм',w:22},{h:'Ед.',w:6},{h:'Остаток на начало',w:12,t:'n'},{h:'Приход',w:11,t:'n'},{h:'Расход',w:11,t:'n'},{h:'Остаток на конец',w:12,t:'n'},{h:'Закуплено на сумму',w:13,t:'m'}]
       : [{h:'Топливо, масла',w:22},{h:'Ед.',w:6},{h:'Остаток на начало',w:12,t:'n'},{h:'Приход',w:11,t:'n'},{h:'Расход',w:11,t:'n'},{h:'Остаток на конец',w:12,t:'n'},{h:'Закуплено на сумму',w:13,t:'m'}];
     const btot = bcols.map((c, i) => c.t === 'm' ? sum(brows, i) : null); btot[0] = null;
     out.push({name:cat === 'feed' ? 'Корма — остатки' : 'ГСМ — остатки', title:cat === 'feed' ? 'Склад кормов: приход, расход, остаток' : 'ГСМ: приход, расход, остаток', note:period, cols:bcols, rows:brows, total:btot});
@@ -2417,7 +2407,7 @@ function buildFeedPlan(sheets){
       if(it && b != null && Math.abs(b - (it.inQ - it.outQ)) > 0.01) issues.push({level:'warn', where:`Остатки, ${it.name}`, text:`В листе «Остатки» ${num(b)} ${it.unit}, а по приходу и расходу выходит ${num(it.inQ - it.outQ)} ${it.unit}. Загрузится ${num(it.inQ - it.outQ)} — проверьте, не пропущена ли строка.`}); } }
   const dates = moves.filter(m => m.kind === 'out').map(m => m.date).sort(), from = dates[0], to = dates[dates.length - 1];
   const autoDays = from ? S.feedauto.filter(f => !f.skipped && f.date >= from && f.date <= to && Object.keys(f.items||{}).length).map(f => f.date).sort() : [];
-  if(autoDays.length) issues.push({level:'warn', where:'Автосписание', text:`За ${autoDays.map(fmtShort).join(', ')} приложение уже списало корма по рационам, а в файле есть расход за эти же дни. Если это один и тот же корм, отмените автосписание за эти дни в «Склад → Журнал списаний».`});
+  if(RATIONS_ON && autoDays.length) issues.push({level:'warn', where:'Автосписание', text:`За ${autoDays.map(fmtShort).join(', ')} приложение уже списало корма по рационам, а в файле есть расход за эти же дни. Если это один и тот же корм, отмените автосписание за эти дни в «Склад → Журнал списаний».`});
   return {items: items.filter(i => i.inQ || i.outQ || i.mode === 'new'), moves, issues};
 }
 function applyFeedPlan(plan){
@@ -2470,7 +2460,7 @@ function feedImportView(res, plan, fname){
 
 function importSheet(){
   const body = `<p class="muted" style="margin:0">Можно загрузить три вида файлов: список животных, журнал молока (листы «Козье молоко», «Овечье молоко») и склад кормов (листы «Справочник», «Приход», «Расход»). Приложение само поймёт, что за файл.</p>
-    <p class="muted" style="margin:0">Для списка животных приложение само найдёт столбцы «№ бирки», «Категория», «Пол», «Дата рождения», «Примечание», «Рацион» и строки «Загон № …». Листы называйте как помещения: «Овчарня 1», «Овчарня 2», «Козлятник»; раздел «Карантин» можно вести внутри листа.</p>
+    <p class="muted" style="margin:0">Для списка животных приложение само найдёт столбцы «№ бирки», «Категория», «Пол», «Дата рождения», «Примечание» и строки «Загон № …». Листы называйте как помещения: «Овчарня 1», «Овчарня 2», «Козлятник»; раздел «Карантин» можно вести внутри листа.</p>
     <label class="btn primary filebtn"><input type="file" id="imf" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">Выбрать файл</label>
     <div id="imres"></div>`;
   openSheet('Загрузка из Excel', body, s => {
@@ -2507,7 +2497,6 @@ function importSheet(){
         <div class="list">
           <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="im-labels" checked><span>Подписать загоны названиями из файла <span class="muted">(«Дойные», «Ярки»…)</span></span></label>
           ${plan.births.length ? `<label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="im-births" checked><span>Записать окоты из примечаний: ${plan.births.length}</span></label>` : ''}
-          ${rCount ? `<label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="im-rations"><span>Создать рационы ${Object.keys(plan.rations).map(n => '№' + n).join(', ')} из файла и назначить загонам<br><span class="muted">Корма из рационов добавятся на склад. С сегодняшнего дня зерно начнёт списываться по головам — внесите приход, иначе остаток уйдёт в минус.</span></span></label>` : ''}
         </div>
         <div class="actions"><button class="btn primary" id="imgo">Загрузить ${heads(list.length)}</button></div>`;
       res.querySelector('#imgo').onclick = () => {
@@ -2523,4 +2512,4 @@ function importSheet(){
 
 /* ===== Старт ===== */
 boot();
-window.OTARA = {S, PEN, feedUse, byId, itemById, rationById}; // для отладки
+window.OTARA = {S, PEN, feedUse, byId, itemById, rationById, purgeRations}; // для отладки
