@@ -199,7 +199,7 @@ const FIELD = {tag:'бирка', name:'кличка', species:'вид', sex:'п�
   motherId:'мать', fatherId:'отец', note:'заметка', outDate:'дата выбытия', since:'в загоне с', type:'событие', date:'дата', drug:'препарат', dose:'доза',
   nextDate:'повтор', doneNext:'повтор сделан', weight:'вес', sireId:'производитель', count:'приплод', animalIds:'животные', kind:'тип', qty:'количество',
   item:'позиция', vehicle:'транспорт', price:'сумма', amount:'сумма', category:'статья', liters:'литры', to:'получатель', extra:'общий надой', session:'дойка',
-  label:'назначение', ration:'рацион', items:'состав', mode:'норма', unit:'единица', plate:'госномер', trailer:'номер прицепа', vtype:'тип техники', gsm:'в ГСМ', who:'кто заправлял / выдал', expiry:'годен до', series:'серия', number:'номер', paused:'пауза', from:'с даты', skipped:'не списывать', locked:'исправлено вручную'};
+  label:'назначение', ration:'рацион', items:'состав', mode:'норма', unit:'единица', plate:'госномер', trailer:'номер прицепа', vtype:'тип техники', gsm:'в ГСМ', who:'кто заправлял / выдал', expiry:'годен до', min:'мин. остаток', series:'серия', number:'номер', paused:'пауза', from:'с даты', skipped:'не списывать', locked:'исправлено вручную'};
 function fmtVal(k, v, d){
   if(v===undefined || v===null || v==='' || v===DEL) return '—';
   if(k==='pen') return penShort(v) || '—';
@@ -806,7 +806,7 @@ function stockCatView(cat){
       const b = bal[it.id]||0, usedM = S.moves.filter(m => m.item===it.id && m.kind==='out' && (m.date||'').startsWith(mon)).reduce((a,m) => a + (+m.qty||0), 0);
       const exp = it.expiry ? daysBetween(today(), it.expiry) : null;
       const sub2 = [it.series ? `серия ${it.series}` : '', it.number ? `№ ${it.number}` : '', usedM ? `расход за ${parse(mon+'-01').toLocaleDateString('ru-RU',{month:'long'})}: ${num(round(usedM,2))} ${it.unit}` : '', it.expiry ? `годен до ${fmtD(it.expiry)}` : ''].filter(Boolean).join(' · ') || it.unit;
-      const pill = b < 0 ? `<span class="pill bad">минус</span>` : b === 0 ? `<span class="pill warn">нет</span>` : exp != null && exp < 0 ? `<span class="pill bad">просрочен</span>` : exp != null && exp < 30 ? `<span class="pill warn">срок</span>` : '';
+      const pill = b < 0 ? `<span class="pill bad">минус</span>` : b === 0 ? `<span class="pill warn">нет</span>` : it.min > 0 && b < it.min ? `<span class="pill warn">мало</span>` : exp != null && exp < 0 ? `<span class="pill bad">просрочен</span>` : exp != null && exp < 30 ? `<span class="pill warn">срок</span>` : '';
       return `<button class="row" data-item="${it.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(it.name)}</div><div class="sub">${esc(sub2)}</div></span>
         <span class="side"><strong class="${b<0?'money minus':''}">${num(b)} ${esc(it.unit)}</strong>${pill}</span></button>`;
     }).join('') + `</div>`;
@@ -1475,6 +1475,7 @@ function itemForm(it){
       ${fld('it-note','Заметка',`<input id="it-note" name="note" value="${esc(v.note)}" placeholder="напр. кто закреплён" autocomplete="off">`)}
       <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="it-gsm" ${v.gsm === false ? '' : 'checked'}><span>В ГСМ — можно выбрать при заправке</span></label>`
     : `${fld('it-unit','Единица',`<select id="it-unit" name="unit">${units.map(u => opt(u,u,v.unit)).join('')}</select>`)}
+      ${fld('it-min','Минимальный остаток (необязательно)',`<input id="it-min" name="min" inputmode="decimal" value="${esc(v.min ?? '')}" placeholder="когда показывать «мало»" autocomplete="off">`)}
       ${v.cat==='vet' ? `<div class="two">${fld('it-series','Серия',`<input id="it-series" name="series" value="${esc(v.series)}" autocomplete="off">`)}${fld('it-number','Номер',`<input id="it-number" name="number" value="${esc(v.number)}" autocomplete="off">`)}</div>
         ${fld('it-exp','Годен до (необязательно)',`<input id="it-exp" type="date" name="expiry" value="${esc(v.expiry)}">`)}` : ''}
       ${!isEdit ? `<div class="two">${fld('it-qty','Количество',`<input id="it-qty" name="qty0" inputmode="decimal" autocomplete="off" placeholder="сколько есть">`)}${fld('it-date','Дата прихода',`<input id="it-date" type="date" name="date0" value="${today()}">`)}</div>
@@ -1489,6 +1490,7 @@ function itemForm(it){
       ev.preventDefault(); const d = Object.fromEntries(new FormData(f)); for(const k in d) d[k] = String(d[k]).trim();
       if(!d.name){ const e = s.querySelector('#iterr'); e.hidden = false; e.textContent = 'Укажите название.'; return; }
       if(isVeh){ d.gsm = s.querySelector('#it-gsm').checked; d.unit = ''; }
+      if(!isVeh){ const mn = dec(d.min || ''); if(mn > 0) d.min = round(mn, 3); else if(isEdit) d.min = null; else delete d.min; }
       const q0 = dec(d.qty0 || ''), date0 = d.date0 || today(); delete d.qty0; delete d.date0;
       if(!isVeh && String(f.querySelector('#it-qty')?.value || '').trim() && !(q0 > 0)){ const e = s.querySelector('#iterr'); e.hidden = false; e.textContent = 'Количество — число больше нуля.'; return; }
       if(isEdit) store.set('items', it.id, {...strip(it), ...d});
@@ -2323,14 +2325,24 @@ function buildImportPlan(sheets){
       if(cols.barn != null && row[cols.barn]){ const b = barnByText(row[cols.barn]); if(b && cols.pen != null){ const pi = parsePenText('загон ' + row[cols.pen]); if(pi) a.pen = penIdFor(b, pi.n, pi.letter); } }
       if(a.pen && pens[a.pen]){ pens[a.pen].heads++; if(a.rationNo) pens[a.pen].rations[a.rationNo] = (pens[a.pen].rations[a.rationNo] || 0) + 1; }
       const om = a.note.match(/окот\w*\s*(\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4})/i);
-      if(om) births.push({motherIdx:animals.length, date:xlDate(om[1]), kidTags:(a.note.slice(om.index + om[0].length).match(/\d{2,}[\d\-]*/g) || [])});
+      if(om){ const rest = a.note.slice(om.index + om[0].length), kids = []; let km; const re = /([а-яё]+)?[\s,;:]*(\d{2,}[\d\-]*)/gi;
+        while((km = re.exec(rest))){ const w = norm(km[1] || ''); kids.push({tag:km[2], sex: /^(козел|козлик|самец|баран|баранчик)/.test(w) ? 'm' : /^(коза|козочк|самк|ярк|ярочк|овечк)/.test(w) ? 'f' : null}); }
+        births.push({motherIdx:animals.length, date:xlDate(om[1]), kids, kidTags:kids.map(k => k.tag)}); }
       animals.push(a);
     }
     if(!cols) issue('warn', sh.name, 'Не найдена строка с заголовком «№ бирки» — лист пропущен.');
   }
   // номера без бирки
-  let bn = 0; const used = new Set([...animals.map(a => norm(a.tag)), ...S.animals.map(a => norm(a.tag))]);
-  animals.filter(a => a.noTag).forEach(a => { do { bn++; a.tag = `б/н-${bn}`; } while(used.has(norm(a.tag))); used.add(norm(a.tag)); a.note = [a.note, 'в файле без номера бирки'].filter(Boolean).join('; '); issue('info', a.where, `Без номера бирки — записана как ${a.tag}.`); });
+  // «б/н»: сначала ищем уже заведённых в приложении (того же вида, лучше в том же загоне), иначе даём следующий номер
+  const bnPool = S.animals.filter(x => x.status === 'active' && /^б\/н-\d+$/.test(x.tag)), bnUsed = new Set();
+  const taken = new Set([...animals.map(a => norm(a.tag)), ...S.animals.map(a => norm(a.tag))]);
+  animals.filter(a => a.noTag).forEach(a => {
+    const c = bnPool.filter(x => x.species === a.species && !bnUsed.has(x.id));
+    const m = c.find(x => a.pen && x.pen === a.pen) || c.find(x => norm(x.cat) === norm(a.cat)) || c[0];
+    if(m){ bnUsed.add(m.id); a.tag = m.tag; issue('info', a.where, `Без номера бирки — это ${a.tag}, уже есть в приложении.`); }
+    else { let k = 0; do { k++; a.tag = `б/н-${k}`; } while(taken.has(norm(a.tag))); taken.add(norm(a.tag)); issue('info', a.where, `Без номера бирки — записана как ${a.tag}.`); }
+    if(!/без номера бирки/.test(a.note)) a.note = [a.note, 'в файле без номера бирки'].filter(Boolean).join('; ');
+  });
   // повторы в файле
   const seen = {};
   animals.forEach(a => {
@@ -2344,13 +2356,16 @@ function buildImportPlan(sheets){
   animals.filter(a => !a.skip && !a.pen).forEach(a => issue('warn', a.where, `Бирка ${a.tag}: загон не определён — попадёт «Без загона».`));
   // совпадения с тем, что уже есть в приложении
   animals.filter(a => !a.skip).forEach(a => { a.existing = S.animals.find(x => x.status === 'active' && x.species === a.species && norm(x.tag) === norm(a.tag)) || null; });
+  const inFile = new Set(animals.filter(a => !a.skip).map(a => a.species + '|' + norm(a.tag)));
+  const kidTagsAll = new Set(births.flatMap(b => b.kids.map(k => norm(k.tag))));
+  const missing = S.animals.filter(x => x.status === 'active' && !inFile.has(x.species + '|' + norm(x.tag)) && !kidTagsAll.has(norm(x.tag)));
   // рационы по загонам — по большинству животных
   Object.values(pens).forEach(p => { const e = Object.entries(p.rations).sort((x, y) => y[1] - x[1]); p.ration = e[0]?.[0] || null; p.mixed = e.length > 1; });
   Object.entries(pens).forEach(([id, p]) => { if(p.mixed) issue('info', penLong(id), `В загоне животные с разными рационами (${Object.entries(p.rations).map(([k, n]) => `№${k}: ${n}`).join(', ')}) — назначен №${p.ration}.`); });
   Object.values(rationsFound).forEach(r => { const sum = r.items.reduce((s, x) => s + x.g, 0); if(r.total && Math.abs(sum - r.total) > 1) issue('warn', `Рацион №${r.no}`, `Сумма кормов ${sum} г, а в итоге указано ${r.total} г на сутки. Загружено ${sum} г — проверьте состав.`); });
   const usedNos = new Set(Object.values(pens).map(p => p.ration).filter(Boolean));
   usedNos.forEach(no => { if(!rationsFound[no]) issue('info', `Рацион №${no}`, 'Состав не найден в файле — рацион не создаётся, назначьте вручную.'); });
-  return {animals, issues, pens, rations:rationsFound, births};
+  return {animals, issues, pens, rations:rationsFound, births, missing};
 }
 
 // Запись плана в базу
@@ -2363,6 +2378,7 @@ function applyImportPlan(plan, opt){
   let created = 0, updated = 0;
   list.forEach((a, i) => {
     const data = {tag:a.tag, species:a.species, sex:a.sex, status:'active', pen:a.pen || ''};
+    if(a.existing){ if(a.sexGuess) delete data.sex; if(!a.pen) delete data.pen; else if(a.pen !== a.existing.pen && !a.since) data.since = today(); }
     for(const k of ['name','cat','birth','since','note','breed','rationNo']) if(a[k]) data[k] = a[k];
     if(a.rationNo) data.rationNo = '№' + a.rationNo;
     if(a.motherTag){ const m = findId(a.motherTag, a.species); if(m) data.motherId = m; else data.motherText = a.motherTag; }
@@ -2371,14 +2387,25 @@ function applyImportPlan(plan, opt){
     else { store.set('animals', ids[i], {...data, by:S.uid||null, byEmail:S.email||null, created:Date.now(), source:'excel'}); created++; }
     if(a.weight > 0) store.add('events', {animalIds:[ids[i]], type:'weight', date:a.since || today(), weight:round(a.weight, 1), note:'из Excel'});
   });
-  let birthsMade = 0;
+  let birthsMade = 0, kidsMade = 0;
   if(opt.births) plan.births.forEach(b => {
     const mom = plan.animals[b.motherIdx]; if(mom.skip || !b.date) return;
-    const mid = ids[idx.get(mom)], kids = b.kidTags.map(t => { const l = byTag[norm(t)] || []; return l.find(k => list[k].species === mom.species); }).filter(k => k != null);
-    store.add('events', {animalIds:[mid], type:'birth', date:b.date, count:kids.length || b.kidTags.length, note:'из Excel: ' + mom.note});
-    kids.forEach(k => store.merge('animals', ids[k], {motherId:mid, ...(list[k].birth ? {} : {birth:b.date})}));
+    const mid = ids[idx.get(mom)];
+    b.kids.forEach(k => {
+      const li = (byTag[norm(k.tag)] || []).find(i => list[i].species === mom.species);
+      if(li != null){ store.merge('animals', ids[li], {motherId:mid, ...(list[li].birth ? {} : {birth:b.date})}); return; }
+      const ex = S.animals.find(x => x.species === mom.species && norm(x.tag) === norm(k.tag));
+      if(ex){ if(ex.motherId !== mid || !ex.birth) store.merge('animals', ex.id, {motherId:mid, ...(ex.birth ? {} : {birth:b.date})}); return; }
+      if(!k.sex) return;
+      store.set('animals', S.be.newId('animals'), {tag:k.tag, species:mom.species, sex:k.sex, status:'active', pen:mom.pen || '', birth:b.date, motherId:mid, cat: mom.species === 'goat' ? 'Козлёнок' : 'Ягнёнок', note:'из примечания об окоте', by:S.uid||null, byEmail:S.email||null, created:Date.now(), source:'excel'});
+      kidsMade++;
+    });
+    if(S.events.some(e => e.type === 'birth' && e.date === b.date && (e.animalIds||[]).includes(mid))) return;
+    store.add('events', {animalIds:[mid], type:'birth', date:b.date, count:b.kids.length || b.kidTags.length, note:'из Excel: ' + mom.note});
     birthsMade++;
   });
+  let missingDone = 0;
+  if(opt.missing === 'nopen') (plan.missing || []).forEach(x => { if(x.pen){ store.merge('animals', x.id, {pen:''}); missingDone++; } });
   if(opt.labels) Object.entries(plan.pens).forEach(([pid, p]) => { if(p.label) store.merge('pens', pid, {label:p.label}); });
   let rationsMade = 0;
   if(opt.rations){
@@ -2398,7 +2425,7 @@ function applyImportPlan(plan, opt){
     Object.entries(plan.pens).forEach(([pid, p]) => { if(p.ration && rid[p.ration]){ store.merge('pens', pid, {ration:rid[p.ration]}); any = true; } });
     if(any) ensureFeedStart();
   }
-  return {created, updated, birthsMade, rationsMade};
+  return {created, updated, birthsMade, rationsMade, kidsMade, missingDone};
 }
 
 /* ----- Загрузка журнала молока и склада кормов ----- */
@@ -2408,7 +2435,11 @@ const colOf = (head, re) => head.findIndex(v => re.test(norm(v)));
 function fileKind(sheets){
   const names = sheets.map(s => norm(s.name));
   if(sheets.some(s => /молок/.test(norm(s.name)) && headerAt(s.rows, /утрен/) >= 0)) return 'milk';
-  if(names.includes('справочник') && (names.includes('приход') || names.includes('расход'))) return 'feed';
+  if(names.includes('справочник') && (names.includes('приход') || names.includes('расход'))){
+    const sp = sheets.find(s => norm(s.name) === 'справочник'), txt = sheets.filter(s => ['справочник','приход','расход'].includes(norm(s.name))).flatMap(s => s.rows.slice(0, 3).flat()).map(norm).join('|');
+    const pCodes = (sp?.rows || []).slice(1, 30).filter(r => /^п\d/.test(norm(r?.[0]))).length;
+    return /препарат|ответствен|причин/.test(txt) || pCodes > 2 ? 'vet' : 'feed';
+  }
   return 'herd';
 }
 // Журнал молока: листы «Козье молоко» / «Овечье молоко», столбцы Дата | Утренний | Вечерний | Выпойка | Забрано | Остаток
@@ -2467,58 +2498,63 @@ function applyMilkPlan(plan){
 }
 // Склад кормов: листы «Справочник» (Код | Наименование | Ед. изм.), «Приход», «Расход», «Остатки»
 const feedKey = s => norm(s).replace(/^(к-к|комбикорм)\s*/, '').replace(/[^a-zа-я0-9]/g, '').replace(/(.)\1+/g, '$1');
-function buildFeedPlan(sheets){
-  const by = n => sheets.find(s => norm(s.name) === n), issues = [];
+function buildFeedPlan(sheets, cat = 'feed'){
+  const by = n => sheets.find(s => norm(s.name) === n), issues = [], W = ITEM_WORD[cat];
   const dir = {}, sp = by('справочник');
-  if(sp){ const hr = Math.max(0, headerAt(sp.rows, /наимен/)), h = sp.rows[hr] || [], cc = colOf(h, /^код/), cn = colOf(h, /наимен/), cu = colOf(h, /ед/);
-    for(let ri = hr + 1; ri < sp.rows.length; ri++){ const r = sp.rows[ri] || [], code = String(r[cc] ?? '').trim(), name = String(r[cn] ?? '').trim();
-      if(code && name && name !== '0') dir[code] = {code, name, unit:String(r[cu] ?? '').trim() || 'кг'}; } }
+  const codeIn = v => { const m = String(v ?? '').match(/^\s*([^\s—–-]+)\s*[—–-]\s/); return m ? m[1] : ''; };
+  if(sp){ const hr = Math.max(0, headerAt(sp.rows, /наимен/)), h = sp.rows[hr] || [], cc = colOf(h, /^код/), cn = colOf(h, /наимен/), cu = colOf(h, /^ед/), cm = colOf(h, /мин/);
+    for(let ri = hr + 1; ri < sp.rows.length; ri++){ const r = sp.rows[ri] || [], code = String(r[cc] ?? '').trim(), name = String(r[cn] ?? '').trim().replace(/\s+/g, ' ');
+      if(code && name && name !== '0') dir[code] = {code, name, unit:String(r[cu] ?? '').trim() || (cat === 'vet' ? 'шт' : 'кг'), min: cm >= 0 ? xlNum(r[cm]) : null, exp:''}; } }
   const moves = [], keys = {};
   for(const [sheet, kind] of [['приход','in'], ['расход','out']]){
     const sh = by(sheet); if(!sh) continue;
     const hr = Math.max(0, headerAt(sh.rows, /^дата/)), h = sh.rows[hr] || [];
-    const c = {date:colOf(h, /^дата/), code:colOf(h, /^код/), qty:colOf(h, /кол-?во|количеств/), unit:colOf(h, /^ед/), sup:colOf(h, /поставщ/), doc:colOf(h, /документ/), act:colOf(h, /акт|бригадир/), group:colOf(h, /групп/), note:colOf(h, /примеч/)};
+    const c = {date:colOf(h, /^дата/), code:colOf(h, /^код/), name:colOf(h, /препарат|наимен|корм/), qty:colOf(h, /кол-?во|количеств/), unit:colOf(h, /^ед/), sup:colOf(h, /поставщ/), doc:colOf(h, /документ/), act:colOf(h, /акт|бригадир/),
+      group:colOf(h, /групп/), reason:colOf(h, /причин/), who:colOf(h, /ответствен/), exp:colOf(h, /срок/), note:colOf(h, /примеч/)};
     for(let ri = hr + 1; ri < sh.rows.length; ri++){
-      const r = sh.rows[ri] || [], code = String(r[c.code] ?? '').trim(), qty = xlNum(r[c.qty]), date = xlDate(r[c.date]);
+      const r = sh.rows[ri] || [], qty = xlNum(r[c.qty]), date = xlDate(r[c.date]);
+      const code = String(r[c.code] ?? '').trim() || (c.name >= 0 ? codeIn(r[c.name]) : '');
       if(!code && qty == null) continue;
       const where = `${sh.name}, строка ${ri + 1}`;
       if(!dir[code]){ issues.push({level:'warn', where, text:`Код «${code}» не найден в справочнике — строка пропущена.`}); continue; }
       if(!(qty > 0)){ if(qty !== 0) issues.push({level:'warn', where, text:'Не указано количество — строка пропущена.'}); continue; }
       if(!date){ issues.push({level:'warn', where, text:'Не указана дата — строка пропущена.'}); continue; }
       const t = v => c[v] >= 0 ? String(r[c[v]] ?? '').trim() : '';
-      const note = (kind === 'in' ? [t('sup'), t('doc') ? '№' + t('doc') : '', t('note')] : [t('group'), t('act'), t('note')]).filter(Boolean).join(' · ');
+      const exp = c.exp >= 0 ? xlDate(r[c.exp]) : '';
+      if(kind === 'in' && exp && (!dir[code].exp || exp < dir[code].exp)) dir[code].exp = exp;
+      const note = (kind === 'in' ? [t('sup'), t('doc') ? '№' + t('doc') : '', exp ? 'годен до ' + fmtD(exp) : '', t('note')] : [t('group'), t('reason'), t('act') && t('act') !== t('doc') ? t('act') : t('doc'), t('note')]).filter(Boolean).join(' · ');
       let k = `${kind}-${date}-${code}-${qty}`; keys[k] = (keys[k] || 0) + 1; k += '-' + keys[k];
-      moves.push({key:k.replace(/[^\w.-]/g, '_'), kind, code, qty:round(qty, 3), date, note});
+      moves.push({key:(cat === 'feed' ? '' : cat + '-') + k.replace(/[^\w.-]/g, '_'), kind, code, qty:round(qty, 3), date, note, who: kind === 'out' ? t('who') : ''});
     }
   }
-  // сопоставление с кормами в приложении
   const items = Object.values(dir).map(d => {
-    const ex = S.items.find(i => i.cat === 'feed' && feedKey(i.name) === feedKey(d.name));
-    const used = ex && (S.moves.some(m => m.item === ex.id) || S.rations.some(r => (r.items||[]).some(x => x.item === ex.id)) || S.feedauto.some(f => f.items && f.items[ex.id]));
+    const ex = S.items.find(i => i.cat === cat && feedKey(i.name) === feedKey(d.name));
+    const used = ex && (S.moves.some(m => m.item === ex.id) || S.rations.some(r => (r.items||[]).some(x => x.item === ex.id)));
     let mode = 'new';
     if(ex) mode = norm(ex.unit) === norm(d.unit) ? 'same' : used ? 'newunit' : 'relabel';
     return {...d, ex, mode, inQ:0, outQ:0};
   });
   const byCode = Object.fromEntries(items.map(i => [i.code, i]));
   moves.forEach(m => { const it = byCode[m.code]; if(m.kind === 'in') it.inQ += m.qty; else it.outQ += m.qty; m.dup = S.moves.some(x => x.id === 'xl-' + m.key); });
-  items.forEach(i => { if(i.mode === 'newunit') issues.push({level:'warn', where:i.name, text:`В приложении «${i.ex.name}» ведётся в «${i.ex.unit}», а в файле — в «${i.unit}». Будет заведён отдельный корм «${i.name} (${i.unit})».`}); });
+  items.forEach(i => { if(i.mode === 'newunit') issues.push({level:'warn', where:i.name, text:`В приложении «${i.ex.name}» ведётся в «${i.ex.unit}», а в файле — в «${i.unit}». Будет заведена отдельная позиция «${i.name} (${i.unit})».`}); });
   const os = by('остатки');
-  if(os){ const hr = Math.max(0, headerAt(os.rows, /остат/)), h = os.rows[hr] || [], cc = colOf(h, /^код/), cb = colOf(h, /^остат/);
+  if(os){ const hr = Math.max(0, headerAt(os.rows, /остат/)), h = os.rows[hr] || [], cc = colOf(h, /^код/), cb = colOf(h, /^остат/), ce = colOf(h, /срок годн/);
     for(let ri = hr + 1; ri < os.rows.length; ri++){ const r = os.rows[ri] || [], it = byCode[String(r[cc] ?? '').trim()], b = xlNum(r[cb]);
+      if(it && ce >= 0 && xlDate(r[ce])) it.exp = xlDate(r[ce]);
       if(it && b != null && Math.abs(b - (it.inQ - it.outQ)) > 0.01) issues.push({level:'warn', where:`Остатки, ${it.name}`, text:`В листе «Остатки» ${num(b)} ${it.unit}, а по приходу и расходу выходит ${num(it.inQ - it.outQ)} ${it.unit}. Загрузится ${num(it.inQ - it.outQ)} — проверьте, не пропущена ли строка.`}); } }
-  const dates = moves.filter(m => m.kind === 'out').map(m => m.date).sort(), from = dates[0], to = dates[dates.length - 1];
-  const autoDays = from ? S.feedauto.filter(f => !f.skipped && f.date >= from && f.date <= to && Object.keys(f.items||{}).length).map(f => f.date).sort() : [];
-  if(RATIONS_ON && autoDays.length) issues.push({level:'warn', where:'Автосписание', text:`За ${autoDays.map(fmtShort).join(', ')} приложение уже списало корма по рационам, а в файле есть расход за эти же дни. Если это один и тот же корм, отмените автосписание за эти дни в «Склад → Журнал списаний».`});
-  return {items: items.filter(i => i.inQ || i.outQ || i.mode === 'new'), moves, issues};
+  return {cat, items: items.filter(i => i.inQ || i.outQ || i.mode === 'new'), moves, issues};
 }
 function applyFeedPlan(plan){
-  const idOf = {}; let made = 0, n = 0;
+  const cat = plan.cat || 'feed', idOf = {}; let made = 0, n = 0;
   plan.items.forEach(i => {
-    if(i.mode === 'same') idOf[i.code] = i.ex.id;
-    else if(i.mode === 'relabel'){ store.merge('items', i.ex.id, {unit:i.unit}); idOf[i.code] = i.ex.id; }
-    else { const id = S.be.newId('items'); store.set('items', id, {name: i.mode === 'newunit' ? `${i.name} (${i.unit})` : i.name, unit:i.unit, cat:'feed', code:i.code, byEmail:S.email||null}); idOf[i.code] = id; made++; }
+    const extra = {}; if(i.min > 0) extra.min = i.min; if(i.exp) extra.expiry = i.exp;
+    if(i.mode === 'same'){ idOf[i.code] = i.ex.id; const upd = Object.fromEntries(Object.entries(extra).filter(([k, v]) => i.ex[k] !== v)); if(Object.keys(upd).length) store.merge('items', i.ex.id, upd); }
+    else if(i.mode === 'relabel'){ store.merge('items', i.ex.id, {unit:i.unit, ...extra}); idOf[i.code] = i.ex.id; }
+    else { const id = S.be.newId('items'); store.set('items', id, {name: i.mode === 'newunit' ? `${i.name} (${i.unit})` : i.name, unit:i.unit, cat, code:i.code, ...extra, byEmail:S.email||null}); idOf[i.code] = id; made++; }
   });
-  plan.moves.forEach(m => { if(m.dup || !idOf[m.code]) return; store.set('moves', 'xl-' + m.key, {item:idOf[m.code], kind:m.kind, qty:m.qty, date:m.date, note:m.note || (m.kind === 'in' ? 'из Excel' : ''), source:'excel', byEmail:S.email||null}); n++; });
+  plan.moves.forEach(m => { if(m.dup || !idOf[m.code]) return;
+    const d = {item:idOf[m.code], kind:m.kind, qty:m.qty, date:m.date, note:m.note || (m.kind === 'in' ? 'из Excel' : ''), source:'excel', byEmail:S.email||null}; if(m.who) d.who = m.who;
+    store.set('moves', 'xl-' + m.key, d); n++; });
   return {made, n};
 }
 const issuesHtml = issues => { const w = issues.filter(i => i.level === 'warn'), f = issues.filter(i => i.level !== 'warn');
@@ -2544,18 +2580,20 @@ function milkImportView(res, plan, fname){
   };
 }
 function feedImportView(res, plan, fname){
-  if(!plan.moves.length){ res.innerHTML = `<p class="err">Не нашлось строк прихода или расхода. Нужны листы «Справочник», «Приход», «Расход».</p>` + issuesHtml(plan.issues); return; }
-  const nNew = plan.moves.filter(m => !m.dup).length, mode = {same:'уже есть', relabel:'есть, ед. изм. поменяется', newunit:'новый', new:'новый'};
+  const cat = plan.cat || 'feed', W = ITEM_WORD[cat];
+  if(!plan.moves.length && !plan.items.length){ res.innerHTML = `<p class="err">Не нашлось строк прихода или расхода. Нужны листы «Справочник», «Приход», «Расход».</p>` + issuesHtml(plan.issues); return; }
+  const nNew = plan.moves.filter(m => !m.dup).length, nItems = plan.items.filter(i => i.mode === 'new' || i.mode === 'newunit').length;
+  const mode = {same:'уже есть', relabel:'есть, ед. изм. поменяется', newunit:'новая', new:'новая'};
   res.innerHTML = `<div class="stats"><div class="stat"><div class="v">${plan.moves.filter(m => m.kind === 'in').length} / ${plan.moves.filter(m => m.kind === 'out').length}</div><div class="l">строк прихода / расхода${nNew < plan.moves.length ? ` · ${plan.moves.length - nNew} уже загружены` : ''}</div></div>
-      <div class="stat"><div class="v">${plan.items.length}</div><div class="l">кормов</div></div></div>
-    <div class="panel"><div class="eyebrow">Остаток после загрузки</div>${plan.items.map(i => `<div class="kv"><span>${esc(i.name)} <span class="muted">· ${mode[i.mode]}</span></span><strong>${num(round(i.inQ - i.outQ, 2))} ${esc(i.unit)}</strong></div>`).join('')}</div>
+      <div class="stat"><div class="v">${plan.items.length}</div><div class="l">${STOCK_FULL[cat].toLowerCase()}: позиций${nItems ? ` · новых ${nItems}` : ''}</div></div></div>
+    <details class="panel" ${plan.items.length <= 15 ? 'open' : ''}><summary class="eyebrow">Остаток после загрузки</summary>${plan.items.map(i => `<div class="kv"><span>${esc(i.name)} <span class="muted">· ${mode[i.mode]}${i.exp ? ' · до ' + fmtD(i.exp) : ''}</span></span><strong>${num(round(i.inQ - i.outQ, 2))} ${esc(i.unit)}</strong></div>`).join('')}</details>
     ${issuesHtml(plan.issues)}
-    <div class="actions"><button class="btn primary" id="imgo" ${nNew ? '' : 'disabled'}>${nNew ? `Загрузить ${nNew} ${plural(nNew, 'запись', 'записи', 'записей')}` : 'Всё уже загружено'}</button></div>`;
+    <div class="actions"><button class="btn primary" id="imgo" ${nNew || nItems ? '' : 'disabled'}>${nNew || nItems ? `Загрузить ${({feed:'на склад кормов', fuel:'в ГСМ', vet:'в аптеку'})[cat]}` : 'Всё уже загружено'}</button></div>`;
   res.querySelector('#imgo').onclick = () => {
     const b = res.querySelector('#imgo'); b.disabled = true; b.textContent = 'Загружаем…';
     const r = silently(() => applyFeedPlan(plan));
-    journalNote(`Загрузка склада кормов из Excel «${fname}»: операций ${r.n}, новых кормов ${r.made}`);
-    toast(`Склад загружен: операций ${r.n}${r.made ? `, новых кормов ${r.made}` : ''}`); closeSheet(); S.stockCat = 'feed'; go('stock');
+    journalNote(`Загрузка из Excel «${fname}» (${STOCK_FULL[cat]}): операций ${r.n}, новых позиций ${r.made}`);
+    toast(`${STOCK_FULL[cat]}: операций ${r.n}${r.made ? `, новых позиций ${r.made}` : ''}`); closeSheet(); S.stockCat = cat; S.stockSub = 'bal'; go('stock');
   };
 }
 
@@ -2574,7 +2612,7 @@ function importSheet(){
         if(!/\.xlsx$/i.test(f.name)) throw new Error('ext');
         const sheets = await readXlsx(await f.arrayBuffer()), kind = fileKind(sheets);
         if(kind === 'milk') return milkImportView(res, buildMilkPlan(sheets), f.name);
-        if(kind === 'feed') return feedImportView(res, buildFeedPlan(sheets), f.name);
+        if(kind === 'feed' || kind === 'vet') return feedImportView(res, buildFeedPlan(sheets, kind), f.name);
         plan = buildImportPlan(sheets);
       }catch(e){
         res.innerHTML = `<p class="err">${e.message === 'ext' || e.message === 'not_xlsx' ? 'Это не файл .xlsx. Откройте его в Excel и сохраните как «Книга Excel (.xlsx)».' : 'Не удалось прочитать файл: ' + esc(e.message || 'ошибка')}</p>`;
@@ -2597,14 +2635,19 @@ function importSheet(){
         ${infos.length ? `<details class="issues info"><summary>Замечания: ${infos.length}</summary><ul>${infos.map(i => `<li><b>${esc(i.where)}</b> — ${esc(i.text)}</li>`).join('')}</ul></details>` : ''}
         <div class="list">
           <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="im-labels" checked><span>Подписать загоны названиями из файла <span class="muted">(«Дойные», «Ярки»…)</span></span></label>
-          ${plan.births.length ? `<label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="im-births" checked><span>Записать окоты из примечаний: ${plan.births.length}</span></label>` : ''}
+          ${plan.births.length ? `<label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="im-births" checked><span>Записать окоты из примечаний: ${plan.births.length}<br><span class="muted">Уже записанные окоты не повторяются. Детёныши, которых нет в списке строками, заводятся по примечанию («козел 346»).</span></span></label>` : ''}
+        </div>
+        ${plan.missing.length ? `<div class="panel"><div class="eyebrow">Есть в приложении, но нет в файле: ${plan.missing.length}</div>
+          <p class="muted" style="margin:0">${plan.missing.slice(0, 40).map(x => `${esc(x.tag)} (${esc(penShort(x.pen) || 'без загона')})`).join(', ')}${plan.missing.length > 40 ? '…' : ''}</p>
+          <div class="field"><select id="im-missing">${opt('keep', 'Оставить как есть', 'keep')}${opt('nopen', 'Перевести «Без загона» — разберусь потом', '')}</select></div></div>` : ''}
+        <div class="list">
         </div>
         <div class="actions"><button class="btn primary" id="imgo">Загрузить ${heads(list.length)}</button></div>`;
       res.querySelector('#imgo').onclick = () => {
         const btn = res.querySelector('#imgo'); btn.disabled = true; btn.textContent = 'Загружаем…';
-        const r = silently(() => applyImportPlan(plan, {labels:res.querySelector('#im-labels')?.checked, births:res.querySelector('#im-births')?.checked, rations:res.querySelector('#im-rations')?.checked}));
-        journalNote(`Загрузка из Excel «${f.name}»: новых ${r.created}, обновлено ${r.updated}${r.birthsMade ? ', окотов ' + r.birthsMade : ''}${r.rationsMade ? ', рационов ' + r.rationsMade : ''}`);
-        toast(`Загружено: новых ${r.created}, обновлено ${r.updated}${r.birthsMade ? `, окотов ${r.birthsMade}` : ''}${r.rationsMade ? `, рационов ${r.rationsMade}` : ''}`);
+        const r = silently(() => applyImportPlan(plan, {labels:res.querySelector('#im-labels')?.checked, births:res.querySelector('#im-births')?.checked, rations:res.querySelector('#im-rations')?.checked, missing:res.querySelector('#im-missing')?.value}));
+        journalNote(`Загрузка из Excel «${f.name}»: новых ${r.created}, обновлено ${r.updated}${r.birthsMade ? ', окотов ' + r.birthsMade : ''}${r.kidsMade ? ', детёнышей из примечаний ' + r.kidsMade : ''}${r.missingDone ? ', переведено «Без загона» ' + r.missingDone : ''}`);
+        toast(`Загружено: новых ${r.created + r.kidsMade}, обновлено ${r.updated}${r.birthsMade ? `, окотов ${r.birthsMade}` : ''}`);
         closeSheet(); S.herdMode = 'pens'; go('herd');
       };
     };
