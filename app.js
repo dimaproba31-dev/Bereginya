@@ -433,7 +433,7 @@ function planItems(){
     if(e.nextDate && !e.doneNext){
       const ids = (e.animalIds||[]).filter(id => byId(id)?.status==='active');
       if(!ids.length) continue;
-      items.push({kind:'vet', date:e.nextDate, ev:e, title:`${ET[e.type]?.t||'Обработка'}${e.drug?` · ${e.drug}`:''}`,
+      items.push({kind:'vet', date:e.nextDate, ev:e, title:repeatTitle(e),
         sub: ids.length>1 ? heads(ids.length) : animalLabel(byId(ids[0]))});
     }
     if(e.type==='mating'){
@@ -463,19 +463,26 @@ function planItems(){
 const urgency = date => { const d = daysBetween(today(), date); return d < 0 ? 'over' : d <= 7 ? 'soon' : 'later'; };
 
 /* ===== Отрисовка ===== */
-const NAV_OF = {vet:'herd', people:'more', feedsheet:'more', log:'more', home:'home', herd:'herd', pens:'herd', milk:'milk', stock:'stock', more:'more', plan:'more', money:'more', stats:'more'};
+const NAV_OF = {events:'home', plan:'home', vet:'herd', people:'more', feedsheet:'more', log:'more', home:'home', herd:'herd', pens:'herd', milk:'milk', stock:'stock', more:'more', money:'more', stats:'more'};
+function updateClock(){ const c = $('#clock'); if(!c) return; const d = new Date(); c.innerHTML = `<b>${d.toLocaleDateString('ru-RU', {day:'numeric', month:'long', year:'numeric'}).replace(/\s*г\.?$/, '')}</b>${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+setInterval(updateClock, 30000);
 function render(){
   const v = $('#view'), live = S.mode==='live';
   $('nav.tabs').hidden = !live;
   if(!live){ $('#fab').hidden = true; v.innerHTML = gateView(); bindGate(); return; }
   const plan = planItems();
   const urgent = plan.filter(i => daysBetween(today(), i.date) <= 7).length;
-  const b = $('#moreBadge'); b.hidden = !urgent; b.textContent = urgent;
-  document.querySelectorAll('nav.tabs button').forEach(x => x.dataset.tab===NAV_OF[S.tab] ? x.setAttribute('aria-current','page') : x.removeAttribute('aria-current'));
+  const b = $('#moreBadge'); b.hidden = true;
+  const ownBtn = document.querySelector(`nav.tabs button[data-tab="${S.tab}"]`), navKey = ownBtn && ownBtn.offsetParent ? S.tab : NAV_OF[S.tab];
+  document.querySelectorAll('nav.tabs button').forEach(x => x.dataset.tab===navKey ? x.setAttribute('aria-current','page') : x.removeAttribute('aria-current'));
+  v.classList.toggle('wide', S.tab==='home');
+  { const n = todayCount(), eb = $('#evBadge'); if(eb){ eb.hidden = !n; eb.textContent = n; } }
+  { const w = $('#who'); if(w){ w.hidden = !S.email; w.innerHTML = S.email ? `<b>${esc(whoName(S.email))}</b>${S.admin ? 'Администратор' : 'Сотрудник'}` : ''; } }
+  updateClock();
   $('#fab').hidden = !['herd','milk','stock','plan','money'].includes(S.tab) || (S.tab==='herd' && S.herdMode==='pens');
   let html = '';
   if(S.demo) html += `<div class="banner">Демо-режим: всё хранится только в этом браузере.${S.animals.some(a => a.demo) ? ` Сейчас открыт пример хозяйства. <button class="link adm" data-act="clear-demo">Очистить пример</button>` : ''}</div>`;
-  html += ({log:logView, people:peopleView, feedsheet:feedSheetView, vet:vetView, home:homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
+  html += ({log:logView, people:peopleView, feedsheet:feedSheetView, vet:vetView, events:eventsView, home:homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
   const focus = document.activeElement?.id, pos = document.activeElement?.selectionStart;
   v.innerHTML = html;
   bindView();
@@ -489,13 +496,13 @@ function gateView(){
   switch(S.mode){
     case 'loading': return msg('Загрузка…','Открываем данные на телефоне.');
     case 'login': return `<form class="login" id="lf" novalidate>
-      <div class="loginbrand"><img src="icons/logo.png" alt=""><div><div class="eyebrow">Учёт овец и коз</div><h1>Берегиня</h1></div></div>
+      <div class="loginbrand"><img src="icons/logo-round.png" alt=""><div><div class="eyebrow">Учёт овец и коз</div><h1>Берегиня</h1></div></div>
       <p>Войдите учётной записью, которую создал владелец хозяйства. Входить нужно с интернетом, дальше приложение работает и без него.</p>
       ${fld('l-email','Эл. почта',`<input id="l-email" name="email" type="email" autocomplete="username" required>`)}
       ${fld('l-pass','Пароль',`<input id="l-pass" name="password" type="password" autocomplete="current-password" required>`)}
       <p class="err" id="lerr" hidden></p>
       <button class="btn primary" type="submit">Войти</button></form>`;
-    case 'noconfig': return `<div class="login"><div class="loginbrand"><img src="icons/logo.png" alt=""><div><div class="eyebrow">Учёт овец и коз</div><h1>Берегиня</h1></div></div>
+    case 'noconfig': return `<div class="login"><div class="loginbrand"><img src="icons/logo-round.png" alt=""><div><div class="eyebrow">Учёт овец и коз</div><h1>Берегиня</h1></div></div>
       <p>Синхронизация между телефонами ещё не настроена: в файле config.js нет данных проекта Firebase. Шаги — в инструкции README.</p>
       <p>Можно уже сейчас вести учёт на этом устройстве. Эти записи останутся только здесь и не перенесутся в общую базу автоматически.</p>
       <button class="btn primary" data-act="go-local">Работать на этом устройстве</button></div>`;
@@ -561,44 +568,131 @@ const ICON = {
   move:'<path d="M4 7h13l-3-3M20 17H7l3 3"/>'
 };
 const ico = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
+/* ===== Главная (панель) ===== */
+const HICON = {
+  sheep:'<path d="M7 15c-2 0-3.5-1.4-3.5-3.2S5 8.6 7 8.8C7.6 7 9.2 6 11 6.2c1.2-1.2 3.6-1.2 4.8.2 1.9-.2 3.7 1.3 3.7 3.2 0 .3 0 .6-.1.9 1 .5 1.6 1.4 1.6 2.4 0 1.7-1.5 3.1-3.4 3.1"/><path d="M7 15h11M7 15v4M10 15.5V19M15 15.5V19M18 15v4"/>',
+  goat:'<path d="M8 3c0 2.2 1 3.6 2 5M16 3c0 2.2-1 3.6-2 5"/><path d="M9 8h6l1.2 5-2.2 3h-4l-2.2-3z"/><path d="M10 16v2.5l2 2.5 2-2.5V16"/><path d="M7.8 10H5.5M16.2 10h2.3"/>',
+  lamb:'<circle cx="9" cy="10" r="3.2"/><path d="M12 10.5c2.2-.8 5.5-.6 7 1.5 1 1.5.6 3.5-1 4.3H9.5c-1.2 0-2.2-.8-2.4-2"/><path d="M10.5 16.3V20M17 16.3V20"/><path d="M6.3 8.6 4.5 7.5"/>',
+  herd:'<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2c3 .2 5.5 2.6 5.5 5.8"/>',
+  syringe:'<path d="m18 2 4 4M20 4l-4 4M9.5 8.5l6 6M13 5l6 6-9.5 9.5H4v-5.5z"/><path d="m7 13 2 2M10 10l2 2"/>',
+  cal:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M8 14h2M14 14h2M8 17h2"/>',
+  report:'<path d="M5 20V11M10.5 20V5M16 20v-6M21 20H3"/>',
+  heart:'<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/><path d="M12 9v5M9.5 11.5h5"/>',
+  edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>'
+};
+const hico = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${HICON[k] || ICON[k] || ''}</svg>`;
+const startOf = a => [a.birth, a.created ? iso(new Date(a.created)) : ''].filter(Boolean).sort()[0] || '2000-01-01';
+const aliveOn = (a, d) => startOf(a) <= d && (a.status === 'active' || !a.outDate || a.outDate > d);
+const youngOn = (a, d) => a.birth && daysBetween(a.birth, d) < YOUNG_DAYS && daysBetween(a.birth, d) >= 0;
+function herdSeries(days){
+  const t = today(), pts = Array.from({length:days}, (_, i) => addDays(t, i - days + 1));
+  return pts.map(d => { const al = S.animals.filter(a => aliveOn(a, d)); return {d, sheep:al.filter(a => a.species === 'sheep' && !youngOn(a, d)).length, goat:al.filter(a => a.species === 'goat' && !youngOn(a, d)).length, young:al.filter(a => youngOn(a, d)).length}; });
+}
+function herdChart(days){
+  const s = herdSeries(days), sm = (window.innerWidth || 800) < 700, W = sm ? 360 : 640, H = sm ? 190 : 210, L = 34, R = 22, T = 12, B = 24;
+  const mx = Math.max(10, ...s.flatMap(p => [p.sheep, p.goat, p.young]));
+  const step = mx > 400 ? 200 : mx > 200 ? 100 : mx > 80 ? 50 : mx > 40 ? 20 : 10, top = Math.ceil(mx / step) * step;
+  const x = i => L + i * (W - L - R) / Math.max(1, s.length - 1), y = v => T + (H - T - B) * (1 - v / top);
+  const line = (k, c) => `<path d="${s.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p[k]).toFixed(1)).join(' ')}" fill="none" stroke="${c}" stroke-width="2.4" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>${s.length <= 14 ? s.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p[k]).toFixed(1)}" r="3" fill="${c}"/>`).join('') : ''}`;
+  const grid = Array.from({length:top / step + 1}, (_, i) => i * step).map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`).join('');
+  const every = Math.ceil(s.length / 8);
+  const labels = s.map((p, i) => i % every === 0 || i === s.length - 1 ? `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${p.d.slice(8)}.${p.d.slice(5, 7)}</text>` : '').join('');
+  const last = s.at(-1);
+  return `<svg class="hchart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Динамика поголовья: овец ${last.sheep}, коз ${last.goat}, молодняка ${last.young}">${grid}${labels}${line('sheep', 'var(--sheep)')}${line('goat', 'var(--goat)')}${line('young', 'var(--young)')}</svg>`;
+}
+function healthInfo(){
+  const act = S.animals.filter(a => a.status === 'active');
+  const treat = new Set(activeCourses().filter(c => c.sc.kind === 'ill').flatMap(c => c.animals));
+  const watch = new Set(act.filter(a => PEN[a.pen]?.barn.quarantine && !treat.has(a.id)).map(a => a.id));
+  const ok = act.length - treat.size - watch.size;
+  return {total:act.length, ok, treat:treat.size, watch:watch.size, pct: act.length ? Math.round(ok / act.length * 100) : 100};
+}
+function ring(pct){
+  const r = 52, c = 2 * Math.PI * r, d = c * pct / 100;
+  return `<svg class="ring" viewBox="0 0 128 128" aria-hidden="true"><circle cx="64" cy="64" r="${r}" fill="none" stroke="var(--sunk)" stroke-width="11"/>
+    <circle cx="64" cy="64" r="${r}" fill="none" stroke="var(--good)" stroke-width="11" stroke-linecap="round" stroke-dasharray="${d.toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 64 64)"/></svg>`;
+}
+function calendarBox(){
+  const t = today(), m = S.calMonth || t.slice(0, 7), [y, mo] = m.split('-').map(Number);
+  const first = new Date(y, mo - 1, 1), daysIn = new Date(y, mo, 0).getDate(), lead = (first.getDay() + 6) % 7;
+  const monthEnd = `${m}-${pad(daysIn)}`;
+  const plan = agendaItems(monthEnd > t ? monthEnd : t), planDays = new Set(plan.map(x => x.date < t ? t : x.date));
+  const doneDays = new Set(S.events.filter(e => (e.date || '').startsWith(m)).map(e => e.date));
+  const sel = S.calDay && S.calDay.startsWith(m) ? S.calDay : '';
+  const title = first.toLocaleDateString('ru-RU', {month:'long', year:'numeric'}).replace(/\s*г\.?$/, '');
+  let cells = '';
+  for(let i = 0; i < lead; i++) cells += '<span></span>';
+  for(let d = 1; d <= daysIn; d++){ const ds = `${m}-${pad(d)}`;
+    cells += `<button class="cday${ds === t ? ' today' : ''}${ds === sel ? ' sel' : ''}" data-cday="${ds}">${d}${planDays.has(ds) ? '<i class="p"></i>' : doneDays.has(ds) ? '<i class="d"></i>' : ''}</button>`; }
+  const showDay = sel || '';
+  let items;
+  if(showDay){
+    const fut = plan.filter(x => (x.date < t ? t : x.date) === showDay);
+    const past = S.events.filter(e => e.date === showDay && !['dose'].includes(e.type)).slice(0, 8).map(e => ({date:e.date, kind:'done', title:`${ET[e.type]?.t || 'Событие'}${e.scheme ? ' «' + e.scheme.name + '»' : e.drug ? ' · ' + e.drug : ''}`, sub:(e.animalIds || []).length === 1 ? animalLabel(byId(e.animalIds[0])) : heads((e.animalIds || []).length), attr:`data-evopen="${e.id}"`}));
+    items = fut.concat(past);
+  } else items = plan.slice(0, 4);
+  const kindIco = k => k === 'birth' ? hico('lamb') : k === 'stock' ? hico('feed') : k === 'done' ? hico('edit') : hico('syringe');
+  return `<div class="card calcard"><div class="card-h"><h3>Календарь событий</h3><button class="link" data-nav="events" data-aghz2="month">Все</button></div>
+    <div class="calnav"><button data-calm="-1" aria-label="Предыдущий месяц">‹</button><b>${title[0].toUpperCase() + title.slice(1)}</b><button data-calm="1" aria-label="Следующий месяц">›</button></div>
+    <div class="cal">${['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(w => `<span class="wd">${w}</span>`).join('')}${cells}</div>
+    <div class="caldesc">${showDay ? `<div class="eyebrow">${fmtD(showDay)}</div>` : ''}${items.length ? items.map(x => `<button class="cev" ${x.attr}><span class="cico ${x.kind}">${kindIco(x.kind)}</span><span><b>${esc(x.title)}</b><small>${esc(x.date < t && x.kind !== 'done' ? 'просрочено · ' : '')}${fmtD(x.date)}${x.sub ? ' · ' + esc(String(x.sub).split(' · ')[0]) : ''}</small></span></button>`).join('') : `<p class="muted" style="margin:0">${showDay ? 'В этот день ничего нет.' : 'Ближайших событий нет.'}</p>`}</div></div>`;
+}
+function recentRows(){
+  const evs = S.events.filter(e => e.type !== 'dose').slice().sort((a, b) => (b.created || 0) - (a.created || 0) || b.date.localeCompare(a.date)).slice(0, 6);
+  if(!evs.length) return `<p class="muted" style="margin:0">Записей пока нет.</p>`;
+  return `<div class="rtable">` + evs.map(e => {
+    const ids = e.animalIds || [], a = ids.length === 1 ? byId(ids[0]) : null;
+    const when = e.created ? new Date(e.created) : null;
+    const desc = e.type === 'result' ? (e.schemeName || '') : e.scheme ? e.scheme.name : e.type === 'birth' ? `${e.count || 0} ${plural(+e.count || 0, 'детёныш', 'детёныша', 'детёнышей')}` : e.type === 'weight' ? `${num(e.weight)} кг` : [e.drug, e.dose, e.note].filter(Boolean).join(' · ');
+    return `<button class="rrow" data-evopen="${e.id}"><span class="rd">${fmtD(e.date)}${when ? ` <small>${pad(when.getHours())}:${pad(when.getMinutes())}</small>` : ''}</span>
+      <span class="ra">${a ? `№ ${esc(a.tag)} <small>(${a.species === 'goat' ? 'коза' : 'овца'})</small>` : heads(ids.length)}</span>
+      <span class="rt"><i class="ev-${ET[e.type]?.vet ? 'vet' : e.type}"></i>${esc(ET[e.type]?.t || 'Событие')}</span><span class="rx">${esc(desc || '—')}</span></button>`;
+  }).join('') + `</div>`;
+}
 function homeView(){
-  if(loading('milk','items','moves','events')) return `<div class="empty"><p>Загружаем…</p></div>`;
-  const t = today(), act = S.animals.filter(a => a.status==='active');
-  const milkDay = ['am','pm'].reduce((x, ss) => x + milkTotal(milkDoc(t, ss, 'goat')) + milkTotal(milkDoc(t, ss, 'sheep')), 0);
-  const plan = planItems(), soon = plan.filter(i => daysBetween(t, i.date) <= 7);
-  const bal = stockBalance(), {use} = feedUse();
-  const feedDays = S.items.filter(i => i.cat==='feed' && use[i.id] > 0).map(i => ({i, d: Math.floor((bal[i.id]||0) / use[i.id])})).sort((a,b) => a.d - b.d);
-  const low = feedDays[0];
-  const dateLabel = new Date().toLocaleDateString('ru-RU', {weekday:'long', day:'numeric', month:'long'});
-  const stat = (nav, label, value, sub, cls='') => `<button class="stile ${cls}" data-nav="${nav}"><span class="sl">${label}</span><span class="sv">${value}</span><span class="ss">${sub}</span></button>`;
-  let h = `<div class="hello"><h1>${dateLabel[0].toUpperCase() + dateLabel.slice(1)}</h1></div>
-    <div class="stiles">
-      ${stat('herd', 'Поголовье', act.length, `овец ${act.filter(a=>a.species==='sheep').length} · коз ${act.filter(a=>a.species==='goat').length}`)}
-      ${stat('milk', 'Надой сегодня', `${num(milkDay)} <small>л</small>`, milkDay ? 'нажмите, чтобы посмотреть' : 'ещё не записан')}
-      ${(() => { const fi = S.items.filter(i => i.cat==='feed'), neg = fi.filter(i => (bal[i.id]||0) < 0); return stat('stock', 'Корма', `${fi.length} <small>поз.</small>`, neg.length ? `в минусе: ${esc(neg[0].name)}${neg.length > 1 ? ' и ещё ' + (neg.length - 1) : ''}` : fi.length ? 'остатки на складе' : 'склад пуст', neg.length ? 'warn' : ''); })()}
-      ${stat('plan', 'Дела на неделю', soon.length, soon.length ? 'есть что сделать' : 'всё спокойно', soon.some(i => daysBetween(t, i.date) < 0) ? 'warn' : '')}
+  if(loading('milk', 'items', 'moves', 'events')) return `<div class="empty"><p>Загружаем…</p></div>`;
+  const t = today(), wk = addDays(t, -6), act = S.animals.filter(a => a.status === 'active');
+  const young = act.filter(a => groupOf(a) === 'young');
+  const cnt = {sheep:act.filter(a => a.species === 'sheep' && groupOf(a) !== 'young').length, goat:act.filter(a => a.species === 'goat' && groupOf(a) !== 'young').length, young:young.length, all:act.length};
+  const added = f => S.animals.filter(a => f(a) && startOf(a) >= wk && a.status === 'active').length - S.animals.filter(a => f(a) && a.status !== 'active' && a.outDate >= wk).length;
+  const delta = {sheep:added(a => a.species === 'sheep'), goat:added(a => a.species === 'goat'), young:S.animals.filter(a => a.birth >= wk && a.status === 'active').length, all:added(() => true)};
+  const dl = n => `<span class="delta ${n < 0 ? 'neg' : ''}">${n > 0 ? '↑ +' + n : n < 0 ? '↓ ' + n : '±0'} <em>за неделю</em></span>`;
+  const st = (k, ic, l, cls) => `<button class="kpi ${cls}" data-nav="herd"><span class="kico">${hico(ic)}</span><span><span class="kl">${l}</span><b>${cnt[k]}</b>${dl(delta[k])}</span></button>`;
+  const hi = healthInfo(), milkDay = ['am', 'pm'].reduce((x, ss) => x + milkTotal(milkDoc(t, ss, 'goat')) + milkTotal(milkDoc(t, ss, 'sheep')), 0);
+  const nToday = todayCount(), hz = S.chartDays || 8;
+  return `<div class="dash"><div class="dl">
+    <div class="hero-b" role="img" aria-label="Берегиня — ваш надёжный помощник в управлении поголовьем МРС"><picture><source media="(min-width:700px)" srcset="icons/hero-wide.jpg"><img src="icons/hero-phone.jpg" alt=""></picture></div>
+    <div class="kpis">${st('sheep', 'sheep', 'Овцы', 'k1')}${st('goat', 'goat', 'Козы', 'k2')}${st('young', 'lamb', 'Ягнята / Козлята', 'k3')}${st('all', 'herd', 'Всего голов', 'k4')}</div>
+    ${nToday ? `<button class="banner as-btn todayb" data-nav="events" data-aghz2="today">${hico('cal')}<span>События сегодня: <b>${nToday}</b> — что сделать</span><span>›</span></button>` : ''}
+    <div class="duo"><div class="card chartcard"><div class="card-h"><h3>Динамика поголовья</h3><div class="legend"><span><i style="background:var(--sheep)"></i>Овцы</span><span><i style="background:var(--goat)"></i>Козы</span><span><i style="background:var(--young)"></i>Ягнята/Козлята</span></div></div>
+      <div class="chips">${[[8, '8 дней'], [30, 'Месяц'], [90, '3 месяца']].map(([d, l]) => `<button class="chip" data-chd="${d}" aria-pressed="${hz === d}">${l}</button>`).join('')}</div>${herdChart(hz)}</div>
+    <button class="card healthcard" data-tab-go="vet"><div class="card-h"><h3>Состояние здоровья</h3></div>
+      <div class="hbody"><div class="ringw">${ring(hi.pct)}<div class="ringt">${hico('heart')}<b>${hi.pct}%</b><small>в норме</small></div></div>
+      <div class="hlist"><span><i style="background:var(--good)"></i>Здоровые<b>${hi.ok}</b></span><span><i style="background:var(--warn)"></i>На лечении<b>${hi.treat}</b></span><span><i style="background:var(--bad)"></i>Под наблюдением<b>${hi.watch}</b></span></div></div></button></div>
+    <div class="card recentcard"><div class="card-h"><h3>Последние записи</h3><button class="link" data-nav="events" data-aghz2="week">Все события ›</button></div>${recentRows()}</div>
+    </div><div class="dr">
+    ${calendarBox()}
+    <div class="card quickcard"><div class="card-h"><h3>Быстрые действия</h3></div>
+      <button class="qa g" data-act="add-animal">${ico('plus')}Добавить животное</button>
+      <button class="qa b" data-vnew="other">${hico('cal')}Записать событие</button>
+      <button class="qa t" data-act="milkquick">${ico('milk')}Записать надой${milkDay ? ` <small>сегодня ${num(milkDay)} л</small>` : ''}</button>
+      <button class="qa p" data-act="excel">${hico('report')}Создать отчёт</button>
+      <div class="qmini">
+        <button data-vnew="ill">${hico('syringe')}Лечение</button><button data-vnew="vac">${hico('syringe')}Вакцинация</button>
+        <button data-vnew="vit">${hico('syringe')}Витамини&shy;зация</button><button data-vnew="treat">${hico('syringe')}Дегельмин&shy;тизация</button>
+        <button data-act="q-birth">${ico('birth')}Окот</button><button data-act="milkout">${ico('truck')}Отгрузка молока</button>
+        <button data-act="q-feed">${ico('feed')}Приход корма</button><button data-act="q-fuel">${ico('fuel')}Заправка</button>
+        <button data-nav="herd" data-hm2="pens">${ico('move')}По загонам</button><button data-tab-go="feedsheet">${hico('report')}Табель</button>
+      </div></div>
     </div>
-    ${(() => { const vt = vetTasks().length; return vt ? `<button class="banner as-btn" data-tab-go="vet">Ветеринария сегодня: ${vt} ${plural(vt, 'процедура', 'процедуры', 'процедур')} — кого и чем колоть ›</button>` : ''; })()}
-    <h2 class="sec">Быстрые действия</h2>
-    <div class="qgrid">
-      <button class="qbtn" data-act="milkquick">${ico('milk')}<span>Записать надой</span></button>
-      <button class="qbtn" data-act="add-animal">${ico('plus')}<span>Добавить животное</span></button>
-      <button class="qbtn" data-act="q-birth">${ico('birth')}<span>Записать окот</span></button>
-      <button class="qbtn" data-act="q-feed">${ico('feed')}<span>Приход корма</span></button>
-      <button class="qbtn" data-act="q-fuel">${ico('fuel')}<span>Выдать топливо</span></button>
-      <button class="qbtn" data-act="milkout">${ico('truck')}<span>Отгрузка молока</span></button>
-      <button class="qbtn" data-nav="herd" data-hm2="pens">${ico('move')}<span>Перевести по загонам</span></button>
+    <div class="secs">
+      <button class="sec-c" data-nav="herd"><span class="kico">${hico('sheep')}</span><span><b>Поголовье</b><small>Полный учёт и контроль всех животных</small></span></button>
+      <button class="sec-c" data-tab-go="vet"><span class="kico">${hico('syringe')}</span><span><b>Ветеринария</b><small>Лечение по схемам, вакцинации, обработки</small></span></button>
+      <button class="sec-c" data-nav="milk"><span class="kico">${ico('milk')}</span><span><b>Молоко</b><small>Надои утро/вечер, отгрузки</small></span></button>
+      <button class="sec-c" data-nav="stock"><span class="kico">${ico('feed')}</span><span><b>Склад</b><small>Корма, ГСМ, аптека, техника</small></span></button>
+      <button class="sec-c" data-tab-go="stats"><span class="kico">${hico('report')}</span><span><b>Отчёты</b><small>Сводка и выгрузка в Excel</small></span></button>
     </div>
-    <div class="kv"><h2 class="sec">Ветеринария</h2><button class="link" data-tab-go="vet">Схемы и курсы</button></div>
-    <div class="qgrid">
-      <button class="qbtn" data-vnew="ill">${ico('vet')}<span>Добавить лечение</span></button>
-      <button class="qbtn" data-vnew="vac">${ico('vet')}<span>Добавить вакцинацию</span></button>
-      <button class="qbtn" data-vnew="vit">${ico('vet')}<span>Добавить витамини&shy;зацию</span></button>
-      <button class="qbtn" data-vnew="treat">${ico('vet')}<span>Добавить дегельмин&shy;тизацию</span></button>
-    </div>`;
-  if(soon.length) h += `<div class="kv"><h2 class="sec">Ближайшие дела</h2><button class="link" data-nav="plan">Все</button></div>
-    <div class="plan">${soon.slice(0,3).map(it => { const d = daysBetween(t, it.date); return `<div class="task ${urgency(it.date)}"><div class="when"><b>${fmtShort(it.date).split(' ')[0]}</b>${fmtShort(it.date).split(' ')[1]||''}</div><div class="what"><div class="t">${esc(it.title)}</div><div class="s">${esc(it.sub)} · ${d<0?'просрочено':d===0?'сегодня':'через '+d+' '+plural(d,'день','дня','дней')}</div></div></div>`; }).join('')}</div>`;
-  return h;
+  </div>`;
 }
 
 /* ----- Стадо ----- */
@@ -893,7 +987,7 @@ function moreView(){
   const plan = planItems(), soon = plan.filter(i => daysBetween(today(), i.date) <= 7).length;
   const row = (go, t, s) => `<button class="row" data-tab-go="${go}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${t}</div><div class="sub">${s}</div></span><span class="side">›</span></button>`;
   let h = `<div><div class="eyebrow">${esc(S.demo ? 'Демо' : S.local ? 'Учёт на этом устройстве' : (S.email||'') + (S.admin ? ' · администратор' : ''))}</div><h2>Ещё</h2></div><div class="list">
-    ${row('plan','План', soon ? `${soon} ${plural(soon,'дело','дела','дел')} на ближайшую неделю` : 'Обработки, окоты, заканчивающиеся корма')}
+    ${row('events','События', 'Что сделать сегодня и что впереди: уколы, ревакцинации, окоты')}
     ${row('money','Финансы','Доходы и расходы по месяцам')}
     ${row('stats','Сводка','Поголовье, приплод, молоко, деньги за год')}
     <button class="row adm" data-tab-go="people" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Пользователи и имена</div><div class="sub">Чтобы в записях было видно, кто внёс</div></span><span class="side">›</span></button>
@@ -996,7 +1090,7 @@ function bindView(){
   bindPeople(); bindFeedSheet();
   on('[data-f]', b => { S.filter = b.dataset.f; if(!S.filter) S.q = ''; window.scrollTo(0,0); render(); });
   on('[data-hm]', b => { S.herdMode = b.dataset.hm; window.scrollTo(0,0); render(); });
-  on('[data-nav]', b => { if(b.dataset.f2 != null) S.filter = b.dataset.f2; if(b.dataset.hm2) S.herdMode = b.dataset.hm2; S.tab = b.dataset.nav; window.scrollTo(0,0); render(); });
+  on('[data-nav]', b => { if(b.dataset.f2 != null) S.filter = b.dataset.f2; if(b.dataset.hm2) S.herdMode = b.dataset.hm2; if(b.dataset.aghz2) S.agHz = b.dataset.aghz2; S.tab = b.dataset.nav; window.scrollTo(0,0); render(); });
   on('[data-open]', b => animalCard(b.dataset.open));
   on('[data-pen]', b => penSheet(b.dataset.pen));
   on('[data-ration]', b => rationForm(rationById(b.dataset.ration)));
@@ -1013,7 +1107,13 @@ function bindView(){
   on('[data-fin]', b => financeForm(S.finance.find(r => r.id===b.dataset.fin)));
   on('[data-m]', b => { const [y,m] = S.month.split('-').map(Number); S.month = iso(new Date(y, m-1+(+b.dataset.m), 1)).slice(0,7); render(); });
   on('[data-tab-go]', b => go(b.dataset.tabGo));
+  on('[data-evopen]', b => { const e = S.events.find(x => x.id===b.dataset.evopen); if(!e) return; if(e.course) courseSheet(e.course); else if(e.scheme) courseSheet(e.id); else if((e.animalIds||[]).length===1) animalCard(e.animalIds[0]); else eventForm(e); });
+  on('[data-cday]', b => { S.calDay = S.calDay===b.dataset.cday ? '' : b.dataset.cday; render(); });
+  on('[data-calm]', b => { const [y, m] = (S.calMonth || today().slice(0,7)).split('-').map(Number); S.calMonth = iso(new Date(y, m - 1 + (+b.dataset.calm), 1)).slice(0,7); S.calDay = ''; render(); });
+  on('[data-chd]', b => { S.chartDays = +b.dataset.chd; render(); });
   on('[data-vsub]', b => { S.vetSub = b.dataset.vsub; render(); });
+  on('[data-aghz]', b => { S.agHz = b.dataset.aghz; render(); });
+  on('[data-agk]', b => { S.agKind = b.dataset.agk; render(); });
   on('[data-vkind]', b => { S.vetKind = b.dataset.vkind; render(); });
   on('[data-vnew]', b => eventForm({type:b.dataset.vnew}));
   on('[data-dose]', b => { const [id, d] = b.dataset.dose.split(':'); doseSheet(id, +d); });
@@ -1022,8 +1122,7 @@ function bindView(){
   on('[data-scheme]', b => schemeForm(schemeById(b.dataset.scheme)));
   on('[data-done]', b => {
     const e = S.events.find(x => x.id===b.dataset.done); if(!e) return;
-    store.set('events', e.id, {...strip(e), doneNext:true});
-    eventForm({type:e.type, drug:e.drug, dose:e.dose, animalIds:(e.animalIds||[]).filter(id => byId(id)?.status==='active')});
+    eventForm({type:e.type, drug:e.scheme ? '' : e.drug, dose:e.scheme ? '' : e.dose, animalIds:(e.animalIds||[]).filter(id => byId(id)?.status==='active'), schemeId:e.scheme?.id, schemeSnap:e.scheme, fromRepeat:e.id, repeatNo:(+e.repeatNo||0) + 1});
   });
   on('[data-birth]', b => eventForm({type:'birth', animalIds:[b.dataset.birth]}));
   on('[data-restock]', b => moveForm({cat:'feed', kind:'in', item:b.dataset.restock}));
@@ -1179,7 +1278,7 @@ function vetView(){
     h += `<div class="chips" style="flex-wrap:wrap">${Object.entries(SCHEME_KIND).map(([kk, l]) => `<button class="chip" data-vkind="${kk}" aria-pressed="${k === kk}">${l}</button>`).join('')}</div>
       <div class="actions"><button class="btn primary adm" data-act="add-scheme">+ Новая схема</button></div>`;
     h += list.length ? `<div class="list">${list.map(sc => `<button class="row" data-scheme="${sc.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(sc.name)}</div>
-        ${(sc.steps || []).map(st => `<div class="sub">${esc(stepText(st))}</div>`).join('')}${sc.kind === 'ill' ? `<div class="sub">результат — на ${schemeCheckDay(sc)}-й день</div>` : sc.repeat ? `<div class="sub">повтор через ${sc.repeat} ${plural(+sc.repeat, 'день', 'дня', 'дней')}</div>` : ''}</span><span class="side">›</span></button>`).join('')}</div>`
+        ${(sc.steps || []).map(st => `<div class="sub">${esc(stepText(st))}</div>`).join('')}${sc.kind === 'ill' ? `<div class="sub">результат — на ${schemeCheckDay(sc)}-й день</div>` : sc.repeat ? `<div class="sub">повтор через ${sc.repeat} ${plural(+sc.repeat, 'день', 'дня', 'дней')}${+sc.repeatTimes > 1 ? `, ${sc.repeatTimes} раза` : ''}</div>` : ''}</span><span class="side">›</span></button>`).join('')}</div>`
       : `<div class="empty"><p>Схем «${SCHEME_KIND[k]}» пока нет.</p>${k === 'ill' ? `<p class="muted">Например: «1 Понос молодняк» — Кетопрофен 0,5 мл в/м 3 дня + Цефтонит форте 1,0 мл п/к 1 день, результат на 4-й день.</p><div class="actions"><button class="btn adm" data-act="seed-scheme">Добавить этот пример</button></div>` : ''}</div>`;
     h += `<p class="muted" style="margin:0">Дозировку и особенности каждого препарата впишите в «Склад → Аптека» — они подставляются в схему и видны при процедуре.</p>`;
   }
@@ -1209,7 +1308,7 @@ function schemeForm(sc, kind0){
     <div id="sc-steps">${v.steps.map(stepRow).join('')}</div>
     <button type="button" class="link" id="sc-add" style="align-self:flex-start">+ Добавить препарат</button>
     <div id="sc-ill">${fld('sc-check', 'Оценить результат на день', `<input id="sc-check" type="number" min="1" step="1" inputmode="numeric" value="${esc(v.checkDay)}" placeholder="по умолчанию — день после последнего укола">`)}</div>
-    <div id="sc-rep">${fld('sc-repeat', 'Повторная обработка через, дней (необязательно)', `<input id="sc-repeat" type="number" min="1" step="1" inputmode="numeric" value="${esc(v.repeat)}">`)}</div>
+    <div id="sc-rep" class="two">${fld('sc-repeat', 'Повторить через, дней', `<input id="sc-repeat" type="number" min="1" step="1" inputmode="numeric" value="${esc(v.repeat)}" placeholder="напр. 21">`)}${fld('sc-rtimes', 'Сколько раз повторить', `<input id="sc-rtimes" type="number" min="1" step="1" inputmode="numeric" value="${esc(v.repeatTimes || 1)}">`)}</div>
     ${fld('sc-note', 'Заметка', `<textarea id="sc-note">${esc(v.note)}</textarea>`)}
     <p class="muted" id="sc-sum" style="margin:0"></p>
     <p class="err" id="scerr" hidden></p>
@@ -1242,7 +1341,7 @@ function schemeForm(sc, kind0){
       if(!steps.length){ err.hidden = false; err.textContent = 'Добавьте хотя бы один препарат.'; return; }
       const kind = s.querySelector('#sc-kind').value;
       const data = {id: v.id || 's' + Date.now().toString(36), kind, name, steps, note:s.querySelector('#sc-note').value.trim(),
-        checkDay: kind === 'ill' ? (parseInt(s.querySelector('#sc-check').value) || '') : '', repeat: kind !== 'ill' ? (parseInt(s.querySelector('#sc-repeat').value) || '') : ''};
+        checkDay: kind === 'ill' ? (parseInt(s.querySelector('#sc-check').value) || '') : '', repeat: kind !== 'ill' ? (parseInt(s.querySelector('#sc-repeat').value) || '') : '', repeatTimes: kind !== 'ill' ? Math.max(1, parseInt(s.querySelector('#sc-rtimes').value) || 1) : ''};
       const list = schemes().filter(x => x.id !== data.id).concat([data]);
       saveSchemes(list); S.vetKind = kind; toast('Схема сохранена'); closeSheet();
     };
@@ -1329,6 +1428,45 @@ function courseSheet(evId){
     s.querySelectorAll('[data-go]').forEach(b => b.onclick = () => animalCard(b.dataset.go));
     s.querySelector('#cdel').onclick = () => askConfirm(s.querySelector('#cdelc'), 'Удалить курс вместе с отметками процедур?', () => { c.doses.concat(c.results).forEach(x => store.del('events', x.id)); store.del('events', ev.id); toast('Курс удалён'); closeSheet(); });
   }, 'course:' + evId);
+}
+
+/* ===== События: что сделать сегодня и что впереди ===== */
+const repeatTitle = e => e.scheme ? `${e.type === 'vac' ? 'Ревакцинация' : 'Повтор: ' + (ET[e.type]?.t || '').toLowerCase()} «${e.scheme.name}»` : `${ET[e.type]?.t || 'Обработка'}${e.drug ? ' · ' + e.drug : ''} — повтор`;
+function agendaItems(to){
+  const t = today(), out = [];
+  activeCourses().forEach(c => {
+    const kindT = SCHEME_KIND[c.sc.kind] || '';
+    c.stepDays.forEach(d => { if(c.doneDays.has(d)) return; const date = addDays(c.e.date, d - 1); if(date > to) return;
+      out.push({date, kind:'vet', title:`${kindT}: ${c.sc.name} — день ${d}`, sub:`${stepsOnDay(c.sc, d).map(stepShort).join(' + ')} · ${heads(c.animals.length)} · № ${tagsLine(c.animals, 8)}`,
+        attr: date <= t ? `data-dose="${c.e.id}:${d}"` : `data-course="${c.e.id}"`, btn: date <= t ? 'Сделано' : 'Курс'}); });
+    if(c.check){ const date = addDays(c.e.date, c.check - 1); if(date <= to) out.push({date, kind:'vet', title:`Результат лечения: ${c.sc.name}`, sub:`${heads(c.animals.length)} · № ${tagsLine(c.animals, 8)} · здорово / повторить / другая схема`,
+      attr: date <= t ? `data-res="${c.e.id}"` : `data-course="${c.e.id}"`, btn: date <= t ? 'Итог' : 'Курс'}); }
+  });
+  planItems().forEach(it => {
+    if(it.date > to) return;
+    if(it.kind === 'vet') out.push({date:it.date, kind:'vet', title:repeatTitle(it.ev), sub:`${it.sub}${it.ev.scheme ? ' · ' + (it.ev.scheme.steps || []).map(stepShort).join(' + ') : ''} · первая была ${fmtD(it.ev.date)}`, attr:`data-done="${it.ev.id}"`, btn: it.date <= addDays(t, 3) ? 'Сделать' : 'Сделать раньше'});
+    else if(it.kind === 'birth') out.push({date:it.date, kind:'birth', title:it.title, sub:it.sub, attr:`data-birth="${it.animal.id}"`, btn:'Окот'});
+    else out.push({date:it.date, kind:'stock', title:it.title, sub:it.sub, attr:`data-restock="${it.item.id}"`, btn:'Приход'});
+  });
+  const bal = stockBalance();
+  (S.items || []).filter(i => i.cat === 'vet' && i.expiry && (bal[i.id] || 0) > 0 && i.expiry <= to).forEach(i => out.push({date: i.expiry < t ? t : i.expiry, kind:'stock', title:`${i.expiry < t ? 'Просрочен' : 'Истекает срок'}: ${i.name}`, sub:`годен до ${fmtD(i.expiry)} · остаток ${num(bal[i.id])} ${i.unit}`, attr:`data-item="${i.id}"`, btn:'Открыть'}));
+  return out.sort((a, b) => a.date.localeCompare(b.date) || (a.kind === 'vet' ? -1 : 1));
+}
+const todayCount = () => agendaItems(today()).filter(x => x.kind !== 'stock').length;
+function eventsView(){
+  let h = `<h2 class="page" style="margin-top:4px">События</h2>`;
+  if(loading('events')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
+  const t = today(), hz = S.agHz || 'week', kf = S.agKind || '';
+  const to = {today:t, week:addDays(t, 7), month:addDays(t, 31), all:addDays(t, 400)}[hz];
+  const all = agendaItems(to), list = all.filter(x => !kf || x.kind === kf);
+  h += `<div class="segb" role="group">${[['today', 'Сегодня'], ['week', 'Неделя'], ['month', 'Месяц'], ['all', 'Всё']].map(([k, l]) => `<button data-aghz="${k}" aria-pressed="${hz === k}">${l}</button>`).join('')}</div>
+    <div class="chips" style="flex-wrap:wrap">${[['', 'Все', all.length], ['vet', 'Ветеринария', all.filter(x => x.kind === 'vet').length], ['birth', 'Окоты', all.filter(x => x.kind === 'birth').length], ['stock', 'Склад', all.filter(x => x.kind === 'stock').length]].map(([k, l, n]) => `<button class="chip" data-agk="${k}" aria-pressed="${kf === k}">${l}${n ? ' · ' + n : ''}</button>`).join('')}</div>`;
+  if(!list.length) return h + `<div class="empty"><p>${hz === 'today' ? 'На сегодня ничего не запланировано.' : 'В этот период ничего не запланировано.'}</p><p class="muted">Сюда попадают уколы и итоги по курсам лечения, ревакцинации и повторные обработки (если в схеме указан повтор), ожидаемые окоты и корма или препараты, которые заканчиваются.</p></div>`;
+  const groups = {}; list.forEach(x => { const k = x.date < t ? 'over' : x.date; (groups[k] ||= []).push(x); });
+  const label = k => k === 'over' ? 'Просрочено' : k === t ? 'Сегодня, ' + parse(k).toLocaleDateString('ru-RU', {day:'numeric', month:'long'}) : k === addDays(t, 1) ? 'Завтра, ' + parse(k).toLocaleDateString('ru-RU', {day:'numeric', month:'long'}) : (s => s[0].toUpperCase() + s.slice(1))(parse(k).toLocaleDateString('ru-RU', {weekday:'long', day:'numeric', month:'long'}));
+  return h + Object.keys(groups).sort((a, b) => a === 'over' ? -1 : b === 'over' ? 1 : a.localeCompare(b)).map(k => `<div><div class="eyebrow ${k === 'over' ? 'money minus' : ''}">${label(k)}</div></div>
+    <div class="list">${groups[k].map(x => `<button class="row vtask" ${x.attr} style="grid-template-columns:1fr auto"><span class="main"><span class="pill ${x.kind === 'vet' ? 'ok' : x.kind === 'birth' ? 'warn' : ''}">${{vet:'ветеринария', birth:'окот', stock:'склад'}[x.kind]}${k === 'over' ? ' · ' + fmtShort(x.date) : ''}</span>
+      <div class="name">${esc(x.title)}</div><div class="sub">${esc(x.sub)}</div></span><span class="side">${esc(x.btn)} ›</span></button>`).join('')}</div>`).join('');
 }
 
 /* ----- Карточка животного ----- */
@@ -1519,9 +1657,11 @@ function eventForm(e){
     const showFor = () => { const vet = ET[t.value].vet; s.querySelectorAll('[data-for]').forEach(el => el.hidden = !(el.dataset.for===t.value || (el.dataset.for==='vet' && vet)));
       if(vet && isEdit && v.scheme) s.querySelectorAll('.manual').forEach(el => el.hidden = true);
       if(vet && scSel){
-        const k = KIND_OF_TYPE[t.value], list = schemes().filter(x => x.kind===k), cur = scSel.dataset.kind===k ? scSel.value : (list[0]?.id || '');
+        const k = KIND_OF_TYPE[t.value], list = schemes().filter(x => x.kind===k);
+        if(v.schemeSnap && v.schemeSnap.kind===k && !list.some(x => x.id===v.schemeSnap.id)) list.unshift(v.schemeSnap);
+        const want = v.schemeId && list.some(x => x.id===v.schemeId) ? v.schemeId : (list[0]?.id || ''), cur = scSel.dataset.kind===k ? scSel.value : want;
         if(scSel.dataset.kind!==k){ scSel.innerHTML = opt('', list.length ? '— без схемы, вписать вручную —' : 'схем пока нет — вписать вручную', cur) + list.map(x => opt(x.id, x.name, cur)).join(''); scSel.dataset.kind = k; }
-        const sc = schemeById(scSel.value);
+        const sc = schemeById(scSel.value) || (v.schemeSnap?.id===scSel.value ? v.schemeSnap : null);
         s.querySelectorAll('.manual').forEach(el => el.hidden = !!sc);
         s.querySelector('#e-day1w').hidden = !sc;
         s.querySelector('#e-sinfo').innerHTML = sc ? `<div class="panel">${(sc.steps||[]).map(st => `<div class="sub">${esc(stepText(st))}</div>`).join('')}${sc.kind==='ill' ? `<div class="sub">результат — на ${schemeCheckDay(sc)}-й день</div>` : sc.repeat ? `<div class="sub">повтор через ${sc.repeat} дн. — появится в «Плане»</div>` : ''}</div>` : '';
@@ -1566,8 +1706,9 @@ function eventForm(e){
       if(!all.length){ err.hidden = false; err.textContent = 'Отметьте хотя бы одно животное.'; return; }
       const type = fd.get('type');
       const data = {animalIds:all, type, date:fd.get('date') || today(), note:fd.get('note') || ''};
-      const sc = !isEdit && ET[type].vet ? schemeById(fd.get('schemeId')) : null;
-      if(sc){ data.scheme = JSON.parse(JSON.stringify(sc)); data.drug = sc.name; if(sc.repeat) data.nextDate = addDays(data.date, +sc.repeat); }
+      const sc = !isEdit && ET[type].vet ? (schemeById(fd.get('schemeId')) || (v.schemeSnap?.id===fd.get('schemeId') ? v.schemeSnap : null)) : null;
+      const rn = v.fromRepeat ? (+v.repeatNo || 1) : 0;
+      if(sc){ data.scheme = JSON.parse(JSON.stringify(sc)); data.drug = sc.name; if(rn) data.repeatNo = rn; if(sc.repeat && rn < (+sc.repeatTimes || 1)) data.nextDate = addDays(data.date, +sc.repeat); }
       else if(isEdit && e.scheme){ data.scheme = e.scheme; data.drug = e.drug || e.scheme.name; if(e.nextDate) data.nextDate = e.nextDate; if(e.prevCourse) data.prevCourse = e.prevCourse; }
       else if(ET[type].vet){ data.drug = fd.get('drug')||''; data.dose = fd.get('dose')||''; if(fd.get('nextDate')) data.nextDate = fd.get('nextDate'); }
       if(type==='weight'){ const w = dec(fd.get('weight')); if(!(w > 0)){ err.hidden = false; err.textContent = 'Укажите вес.'; return; } data.weight = round(w,1); }
@@ -1576,6 +1717,7 @@ function eventForm(e){
       if(isEdit && e.doneNext && data.nextDate===e.nextDate) data.doneNext = true;
       if(isEdit){ data.by = e.by||null; data.byEmail = e.byEmail||null; data.created = e.created||null; store.set('events', e.id, data); }
       else { const nid = store.add('events', data);
+        if(v.fromRepeat && S.events.some(x => x.id===v.fromRepeat)) store.merge('events', v.fromRepeat, {doneNext:true});
         if(sc && s.querySelector('#e-day1')?.checked && stepsOnDay(sc, 1).length && data.date <= today()) store.add('events', {type:'dose', course:nid, day:1, date:data.date, animalIds:all, steps:stepsOnDay(sc, 1).map(stepShort)}); }
       let made = 0;
       if(type==='birth' && !isEdit && all.length===1){
