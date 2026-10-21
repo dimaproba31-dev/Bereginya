@@ -1629,7 +1629,9 @@ function eventForm(e){
     <div class="field"><label>Животные · <span id="ecount"></span></label>
       <div class="chips" style="flex-wrap:wrap"><button type="button" class="chip" data-pick="all">Всё стадо</button><button type="button" class="chip" data-pick="f">Все самки</button>${barnsHere.map(b => `<button type="button" class="chip" data-pick="b:${b.id}">${b.name}</button>`).join('')}<button type="button" class="chip" data-pick="none">Снять</button></div>
       <select id="e-penpick" aria-label="Отметить загон">${penOptions('', 'Отметить весь загон…')}</select>
-      <div class="list scroll">${act.map(a => `<label class="row pickrow"><input type="checkbox" name="aid" value="${a.id}" ${chosen.has(a.id)?'checked':''}><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'}${a.pen?' · '+esc(penShort(a.pen)):''}</span></label>`).join('') || '<p class="sub" style="padding:12px;margin:0">В стаде пока нет животных.</p>'}</div></div>
+      <div class="search"><input id="e-find" type="search" placeholder="Найти по номеру бирки, кличке, загону" autocomplete="off" enterkeyhint="done"></div>
+      <div id="e-picked" class="picked"></div>
+      <div class="list scroll" id="e-alist">${act.map(a => `<label class="row pickrow" data-s="${esc(norm([a.tag, a.name, a.breed, animalTitle(a), penShort(a.pen), penLabel(a.pen)].filter(Boolean).join(' ')))}" data-t="${esc(norm(a.tag))}"><input type="checkbox" name="aid" value="${a.id}" ${chosen.has(a.id)?'checked':''}><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'}${a.pen?' · '+esc(penShort(a.pen)):''}</span></label>`).join('') || '<p class="sub" style="padding:12px;margin:0">В стаде пока нет животных.</p>'}</div></div>
     ${fld('e-date','Дата',`<input id="e-date" type="date" name="date" value="${esc(v.date)}" max="${addDays(today(),1)}" required>`)}
     <div data-for="vet">${isEdit ? (v.scheme ? `<div class="panel"><div class="eyebrow">Схема: ${esc(v.scheme.name)}</div>${(v.scheme.steps||[]).map(st => `<div class="sub">${esc(stepText(st))}</div>`).join('')}</div>` : '')
       : `${fld('e-scheme','Схема',`<select id="e-scheme" name="schemeId"></select>`)}<div id="e-sinfo"></div>
@@ -1667,7 +1669,17 @@ function eventForm(e){
         s.querySelector('#e-sinfo').innerHTML = sc ? `<div class="panel">${(sc.steps||[]).map(st => `<div class="sub">${esc(stepText(st))}</div>`).join('')}${sc.kind==='ill' ? `<div class="sub">результат — на ${schemeCheckDay(sc)}-й день</div>` : sc.repeat ? `<div class="sub">повтор через ${sc.repeat} дн. — появится в «Плане»</div>` : ''}</div>` : '';
       } };
     if(scSel) scSel.onchange = showFor;
-    const count = () => { const n = checked().length; s.querySelector('#ecount').textContent = n ? `выбрано ${n}` : 'не выбраны'; };
+    const count = () => { const ids = checked(), n = ids.length; s.querySelector('#ecount').textContent = n ? `выбрано ${n}` : 'не выбраны';
+      const pk = s.querySelector('#e-picked'); if(pk) pk.innerHTML = n && n <= 30 ? ids.map(id => `<button type="button" class="ptag" data-unpick="${id}">№ ${esc(byId(id)?.tag || '')} ×</button>`).join('') : n ? `<span class="muted">${n} животных отмечено</span>` : '';
+      pk?.querySelectorAll('[data-unpick]').forEach(b => b.onclick = () => { const c = f.querySelector(`input[name=aid][value="${b.dataset.unpick}"]`); if(c){ c.checked = false; count(); updateKids(); } }); };
+    const findIn = s.querySelector('#e-find');
+    const applyFind = () => { const q = norm(findIn.value); let shown = 0;
+      s.querySelectorAll('#e-alist .pickrow').forEach(r => { const ok = !q || r.dataset.s.includes(q); r.hidden = !ok; if(ok) shown++; });
+      let nf = s.querySelector('#e-nofind'); if(!shown && q){ if(!nf){ nf = document.createElement('p'); nf.id = 'e-nofind'; nf.className = 'sub'; nf.style.cssText = 'padding:12px;margin:0'; s.querySelector('#e-alist').append(nf); } nf.textContent = 'Не найдено: ' + findIn.value; nf.hidden = false; } else if(nf) nf.hidden = true; };
+    if(findIn){ findIn.oninput = applyFind;
+      findIn.onkeydown = ev2 => { if(ev2.key !== 'Enter') return; ev2.preventDefault(); const q = norm(findIn.value); if(!q) return;
+        const rows = [...s.querySelectorAll('#e-alist .pickrow')].filter(r => !r.hidden), exact = rows.filter(r => r.dataset.t === q), pick = exact.length === 1 ? exact[0] : rows.length === 1 ? rows[0] : null;
+        if(pick){ pick.querySelector('input').checked = true; findIn.value = ''; applyFind(); count(); updateKids(); toast('Отмечено: № ' + pick.querySelector('.tag').textContent); } }; }
     const lastSire = (momId, date) => S.events.filter(x => x.type==='mating' && (x.animalIds||[]).includes(momId) && x.date <= date && x.sireId).sort((a,b) => b.date.localeCompare(a.date))[0]?.sireId || '';
     function updateKids(){
       if(t.value!=='birth' || isEdit){ kidsBox.innerHTML = ''; return; }
