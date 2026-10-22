@@ -2607,36 +2607,33 @@ function excelSheet(only){
 
 
 /* ===== Табель кормления (печатный бланк) ===== */
-const FEEDSHEET_DEFAULT = `Рацион №1 — дойные овцы, 0,200–0,220 кг/гол
-Кукуруза — 20%
-Овёс — 20%
-Пшеница — 8%
-К/к «Капелла» — 37%
+const FEEDSHEET_DEFAULT = `Рацион №1 — дойные овцы, 0,200 кг/гол
+Кукуруза — 25%
+Овёс — 15%
+Пшеница — 10%
+К/к «Капелла» — 15%
 Шрот соевый — 15%
-Ячмень
+Ячмень — 20%
 
-Рацион №2 — холостые: 0,150 кг/гол, перед случкой 0,180 кг/гол, откорм взрослых 0,200–0,220 кг/гол
+Рацион №2 — холостые, 0,150 кг/гол
 Овёс — 30%
 Пшеница — 18%
 Кукуруза — 12%
 К/к «Овисмикс» — 40%
 
-Рацион №3 — молодняк овец старше 4 мес: 0,150–0,180 кг/гол, откорм 0,200–0,250 кг/гол
+Рацион №3 — молодняк овец старше 4 мес, 0,100 кг/гол
 Кукуруза — 20%
-Овёс — 20%
+Овёс — 10%
 Ячмень — 20%
-К/к «Капелла» — 40%
-Шрот соевый — 0%
+К/к «Капелла» — 50%
 
 Рацион №4 — молодняк 0–3 мес
-К/к «Салюс» — 40%
-Кукуруза — 26%
-Ячмень — 26%
-Фелуцен гранулы — 8%`;
+К/к «Салюс» — 95%
+Кукуруза — 5%`;
 const feedSheetText = () => setting('feedsheet')?.text ?? FEEDSHEET_DEFAULT;
 function feedSheetView(){
   let h = backTo('Табель кормления');
-  h += `<p class="muted" style="margin:0">Ваш бланк «Рационы для овец с 1.07.2026» — точно такой же файл, как в Excel: рационы, Корпус 1 (старый), Корпус 2 (новый), Загоны (улица). Скачайте и распечатайте — лист уже настроен на альбомный A4.</p>
+  h += `<p class="muted" style="margin:0">Ваш бланк «Рационы для овец с 1.07.2026» — точно такой же файл, как в Excel: рационы, Корпус 1 (старый), Корпус 2 (новый), Загоны (улица). Скачайте и распечатайте — лист уже настроен для печати на A4.</p>
     <div class="actions"><button class="btn primary" id="fs-orig">Скачать табель в Excel</button></div>
     <details class="panel"><summary class="eyebrow">Другой вариант: табель с поголовьем по загонам</summary>
       <form id="fsf" novalidate>
@@ -2646,7 +2643,7 @@ function feedSheetView(){
         <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="fs-rat" checked><span>Подставить № рациона</span></label>
         <div class="actions"><button class="btn" type="submit">Скачать табель с поголовьем</button></div>
         ${fld('fs-text', S.admin ? 'Рационы для этого варианта (пустая строка — следующий рацион)' : 'Рационы', `<textarea id="fs-text" rows="12" ${S.admin ? '' : 'readonly'}>${esc(feedSheetText())}</textarea>`)}
-        ${S.admin ? `<div class="actions"><button class="btn" type="button" id="fs-save">Сохранить рационы</button><button class="btn" type="button" id="fs-reset">Как в файле</button></div>` : ''}
+        ${S.admin ? `<div class="actions"><button class="btn" type="button" id="fs-save">Сохранить рационы</button><button class="btn" type="button" id="fs-reset">Как в бланке</button></div>` : ''}
       </form></details>`;
   return h;
 }
