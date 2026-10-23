@@ -1498,15 +1498,31 @@ function dailyData(d){
   const vet = d === t ? agendaItems(t).filter(x => x.kind === 'vet').length : 0;
   const doneVet = S.events.filter(e => e.date === d && (ET[e.type]?.vet || e.type === 'dose')).length;
   const vetLow = itemsOf('vet').filter(i => { const b = balTo(i.id); return b <= 0 || (i.min > 0 && b < i.min) || (i.expiry && i.expiry < addDays(d, 30)); }).map(i => `${i.name}: ${num(balTo(i.id))} ${i.unit}${i.expiry && i.expiry < addDays(d, 30) ? ', годен до ' + fmtD(i.expiry) : ''}`);
-  return {d, total:act.length, herd, young:act.filter(a => groupOf(a) === 'young').length, milk, feed:stock('feed'), fuel:stock('fuel'), births:births.length, kids, gone:gone.length, hi, vet, doneVet, vetLow};
+  const cntG = (sp, g) => act.filter(a => a.species === sp && (groupOf(a) || '') === g).length;
+  const lines = [
+    ['Дойное стадо овец', cntG('sheep', 'milk'), 1], ['Дойное стадо коз', cntG('goat', 'milk'), 1],
+    ['Бараны-производители', cntG('sheep', 'ram'), 1], ['Козлы-производители', cntG('goat', 'buck'), 0],
+    ['Бараны на мясо', cntG('sheep', 'meat'), 1], ['Козлы на мясо', cntG('goat', 'meat'), 0],
+    ['Суягные овцы', cntG('sheep', 'preg'), 0], ['Сукозные козы', cntG('goat', 'preg'), 0],
+    ['Ремонтный молодняк овец', cntG('sheep', 'repl'), 0], ['Ремонтный молодняк коз', cntG('goat', 'repl'), 0], ['Ярки (козы)', cntG('goat', 'yarki'), 0],
+    ['Ягнята до 4 мес', cntG('sheep', 'young'), 0], ['Козлята до 4 мес', cntG('goat', 'young'), 0],
+    ['Декоративные овцы', cntG('sheep', 'deco'), 0],
+    ['Овцы на карантине', cntG('sheep', 'quar'), 0], ['Козы на карантине', cntG('goat', 'quar'), 0],
+    ['Овцы без группы', cntG('sheep', ''), 0], ['Козы без группы', cntG('goat', ''), 0]
+  ].filter(x => x[2] || x[1]).map(x => [x[0], x[1]]);
+  const totals = [['Всего овец', act.filter(a => a.species === 'sheep').length], ['Всего коз', act.filter(a => a.species === 'goat').length], ['Всего голов', act.length]];
+  return {d, total:act.length, herd, lines, totals, young:act.filter(a => groupOf(a) === 'young').length, milk, feed:stock('feed'), fuel:stock('fuel'), births:births.length, kids, gone:gone.length, hi, vet, doneVet, vetLow};
 }
 function dailyText(r){
-  const L = [`Берегиня — отчёт за ${fmtD(r.d)}`, '', `ПОГОЛОВЬЕ: ${r.total} гол.`];
-  r.herd.forEach(h => { L.push(`${SPECIES_PL[h.sp]}: ${h.total}`); h.groups.forEach(([n, c]) => L.push(`  • ${n} — ${c}`)); });
+  const L = [`Берегиня — отчёт за ${fmtD(r.d)}`, '', 'ПОГОЛОВЬЕ'];
+  r.lines.forEach(([n, c]) => L.push(`${n}: ${c}`));
+  L.push(''); r.totals.forEach(([n, c]) => L.push(`${n}: ${c}`));
   if(r.births || r.gone) L.push(`За день: окотов ${r.births}${r.kids ? ` (детёнышей ${r.kids})` : ''}${r.gone ? `, выбыло ${r.gone}` : ''}`);
   L.push('', 'МОЛОКО ЗА СУТКИ');
-  r.milk.forEach(m => L.push(`${MILKNAME[m.sp]}: утро ${num(m.am)} + вечер ${num(m.pm)} = ${num(m.day)} л; на 1 гол. ${m.avg ? num(m.avg) + ' л' : '—'}${m.n ? ` (дойных ${m.n})` : ''}; отгружено ${num(m.out)} л; в танке ${num(m.bal)} л`));
-  L.push(`Всего: ${num(round(r.milk.reduce((x, m) => x + m.day, 0), 2))} л`);
+  r.milk.forEach(m => { const w = m.sp === 'goat' ? ['коз', 'козу'] : ['овец', 'овцу'];
+    L.push(`Надой ${w[0]} за сутки: ${num(m.day)} л (утро ${num(m.am)}, вечер ${num(m.pm)})`, `Средний удой на 1 ${w[1]}: ${m.avg ? num(m.avg) + ' л' : '—'}`); });
+  L.push(`Всего молока за сутки: ${num(round(r.milk.reduce((x, m) => x + m.day, 0), 2))} л`);
+  r.milk.forEach(m => L.push(`${MILKNAME[m.sp]}: отгружено ${num(m.out)} л, в танке ${num(m.bal)} л`));
   if(r.milk.some(m => m.am && !m.pm)) L.push('(вечерняя дойка ещё не внесена)');
   L.push('', 'КОРМА — ОСТАТОК'); r.feed.forEach(f => L.push(`  • ${f.name}: ${num(f.bal)} ${f.unit}${f.used ? ` (расход за день ${num(f.used)})` : ''}${f.low ? ' — мало!' : ''}`));
   if(r.fuel.length){ L.push('', 'ГСМ — ОСТАТОК'); r.fuel.forEach(f => L.push(`  • ${f.name}: ${num(f.bal)} ${f.unit}${f.used ? ` (выдано за день ${num(f.used)})` : ''}`)); }
@@ -1524,10 +1540,10 @@ function dailyView(){
   h += `<div class="monthsel"><button data-dd="-1" aria-label="Предыдущий день">‹</button><h2>${d === today() ? 'Сегодня, ' : ''}${parse(d).toLocaleDateString('ru-RU', {day:'numeric', month:'long', year:'numeric'}).replace(/\s*г\.?$/, '')}</h2><button data-dd="1" aria-label="Следующий день" ${d >= today() ? 'disabled' : ''}>›</button></div>
     <div class="actions"><button class="btn primary" data-act="daily-xl">Скачать в Excel</button><button class="btn" data-act="daily-share">Отправить текстом</button></div>
     <div class="dgrid">
-    <div class="panel"><div class="eyebrow">Поголовье · ${r.total} гол.</div>${r.herd.map(x => `<div class="kv total"><span>${SPECIES_PL[x.sp]}</span><strong>${x.total}</strong></div>${x.groups.map(([n, c]) => kv(n, c)).join('')}`).join('')}
+    <div class="panel"><div class="eyebrow">Поголовье</div>${r.lines.map(([n, c]) => kv(n, c)).join('')}${r.totals.map(([n, c]) => kv(n, c, 'total')).join('')}
       ${r.births || r.gone ? kv('За день', `окотов ${r.births}${r.kids ? `, детёнышей ${r.kids}` : ''}${r.gone ? `, выбыло ${r.gone}` : ''}`) : ''}</div>
     <div class="panel"><div class="eyebrow">Молоко за сутки</div>${r.milk.map(m => `<div class="kv total"><span>${MILKNAME[m.sp]}</span><strong>${num(m.day)} л</strong></div>
-        ${kv('Утро / вечер', `${num(m.am)} / ${num(m.pm)} л`)}${kv('Средний удой на 1 голову', m.avg ? `${num(m.avg)} л` : '—')}${kv('Дойных голов', m.n || '—')}${kv('Отгружено', `${num(m.out)} л`)}${kv('В танке на конец дня', `${num(m.bal)} л`)}`).join('')}
+        ${kv('Утро / вечер', `${num(m.am)} / ${num(m.pm)} л`)}${kv(`Средний удой на 1 ${m.sp === 'goat' ? 'козу' : 'овцу'}`, m.avg ? `${num(m.avg)} л` : '—')}${kv('Дойных голов', m.n || '—')}${kv('Отгружено', `${num(m.out)} л`)}${kv('В танке на конец дня', `${num(m.bal)} л`)}`).join('')}
       <div class="kv total"><span>Всего за сутки</span><strong>${num(round(r.milk.reduce((x, m) => x + m.day, 0), 2))} л</strong></div>
       ${r.milk.some(m => m.am && !m.pm) ? '<p class="muted" style="margin:0">Вечерняя дойка ещё не внесена — удой за сутки неполный.</p>' : ''}</div>
     <div class="panel"><div class="eyebrow">Корма — остаток на конец дня</div>${r.feed.length ? r.feed.map(f => kv(esc(f.name) + (f.used ? ` <span class="muted">· за день −${num(f.used)}</span>` : ''), `<span class="${f.bal < 0 || f.low ? 'money minus' : ''}">${num(f.bal)} ${esc(f.unit)}</span>`)).join('') : '<p class="muted" style="margin:0">Кормов нет.</p>'}</div>
@@ -1540,10 +1556,10 @@ function dailyView(){
 }
 function dailyXl(){
   const r = dailyData(S.dailyDate || today()), rows = [];
-  rows.push(['Поголовье', 'Всего голов', r.total]);
-  r.herd.forEach(x => { rows.push(['Поголовье', SPECIES_PL[x.sp], x.total]); x.groups.forEach(([n, c]) => rows.push(['', `  ${SPECIES_PL[x.sp]}: ${n}`, c])); });
+  r.lines.forEach(([n, c], i) => rows.push([i ? '' : 'Поголовье', n, c]));
+  r.totals.forEach(([n, c]) => rows.push(['', n, c]));
   if(r.births || r.gone) rows.push(['Поголовье', 'За день: окотов / детёнышей / выбыло', `${r.births} / ${r.kids} / ${r.gone}`]);
-  r.milk.forEach(m => { const n = MILKNAME[m.sp]; rows.push(['Молоко', `${n}: утро, л`, m.am], ['', `${n}: вечер, л`, m.pm], ['', `${n}: за сутки, л`, m.day], ['', `${n}: дойных голов`, m.n || ''], ['', `${n}: средний удой на 1 гол., л`, m.avg || ''], ['', `${n}: отгружено, л`, m.out], ['', `${n}: в танке на конец дня, л`, m.bal]); });
+  r.milk.forEach(m => { const n = MILKNAME[m.sp]; rows.push(['Молоко', `Надой ${m.sp === 'goat' ? 'коз' : 'овец'} за сутки, л`, m.day], ['', `${n}: утро, л`, m.am], ['', `${n}: вечер, л`, m.pm], ['', `Дойное стадо ${m.sp === 'goat' ? 'коз' : 'овец'}, гол.`, m.n || ''], ['', `Средний удой на 1 ${m.sp === 'goat' ? 'козу' : 'овцу'}, л`, m.avg || ''], ['', `${n}: отгружено, л`, m.out], ['', `${n}: в танке на конец дня, л`, m.bal]); });
   rows.push(['Молоко', 'Всего за сутки, л', round(r.milk.reduce((x, m) => x + m.day, 0), 2)]);
   r.feed.forEach((f, i) => rows.push([i ? '' : 'Корма — остаток', `${f.name}, ${f.unit}`, f.bal]));
   r.fuel.forEach((f, i) => rows.push([i ? '' : 'ГСМ — остаток', `${f.name}, ${f.unit}`, f.bal]));
