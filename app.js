@@ -1524,8 +1524,9 @@ function dailyText(r){
   L.push(`Всего молока за сутки: ${num(round(r.milk.reduce((x, m) => x + m.day, 0), 2))} л`);
   r.milk.forEach(m => L.push(`${MILKNAME[m.sp]}: отгружено ${num(m.out)} л, в танке ${num(m.bal)} л`));
   if(r.milk.some(m => m.am && !m.pm)) L.push('(вечерняя дойка ещё не внесена)');
-  L.push('', 'КОРМА — ОСТАТОК'); r.feed.forEach(f => L.push(`  • ${f.name}: ${num(f.bal)} ${f.unit}${f.used ? ` (расход за день ${num(f.used)})` : ''}${f.low ? ' — мало!' : ''}`));
-  if(r.fuel.length){ L.push('', 'ГСМ — ОСТАТОК'); r.fuel.forEach(f => L.push(`  • ${f.name}: ${num(f.bal)} ${f.unit}${f.used ? ` (выдано за день ${num(f.used)})` : ''}`)); }
+  const plain = v => String(round(v, 2)).replace('.', ',');
+  L.push('', 'ОСТАТКИ ПО СКЛАДУ'); r.feed.forEach(f => L.push(`${f.name}: ${plain(f.bal)}${f.low ? ' (мало!)' : ''}`));
+  if(r.fuel.length){ L.push('', 'ГСМ'); r.fuel.forEach(f => L.push(`${f.name}: ${plain(f.bal)}`)); }
   L.push('', 'ЗДОРОВЬЕ', `В норме ${r.hi.pct}%: здоровых ${r.hi.ok}, на лечении ${r.hi.treat}, под наблюдением ${r.hi.watch}`);
   if(r.doneVet) L.push(`Ветобработок за день: ${r.doneVet}`);
   if(r.vet) L.push(`Запланировано на сегодня: ${r.vet}`);
@@ -1546,7 +1547,7 @@ function dailyView(){
         ${kv('Утро / вечер', `${num(m.am)} / ${num(m.pm)} л`)}${kv(`Средний удой на 1 ${m.sp === 'goat' ? 'козу' : 'овцу'}`, m.avg ? `${num(m.avg)} л` : '—')}${kv('Дойных голов', m.n || '—')}${kv('Отгружено', `${num(m.out)} л`)}${kv('В танке на конец дня', `${num(m.bal)} л`)}`).join('')}
       <div class="kv total"><span>Всего за сутки</span><strong>${num(round(r.milk.reduce((x, m) => x + m.day, 0), 2))} л</strong></div>
       ${r.milk.some(m => m.am && !m.pm) ? '<p class="muted" style="margin:0">Вечерняя дойка ещё не внесена — удой за сутки неполный.</p>' : ''}</div>
-    <div class="panel"><div class="eyebrow">Корма — остаток на конец дня</div>${r.feed.length ? r.feed.map(f => kv(esc(f.name) + (f.used ? ` <span class="muted">· за день −${num(f.used)}</span>` : ''), `<span class="${f.bal < 0 || f.low ? 'money minus' : ''}">${num(f.bal)} ${esc(f.unit)}</span>`)).join('') : '<p class="muted" style="margin:0">Кормов нет.</p>'}</div>
+    <div class="panel"><div class="eyebrow">Остатки по складу</div>${r.feed.length ? r.feed.map(f => kv(esc(f.name) + (f.used ? ` <span class="muted">· за день −${String(round(f.used, 2)).replace('.', ',')}</span>` : ''), `<span class="${f.bal < 0 || f.low ? 'money minus' : ''}">${String(round(f.bal, 2)).replace('.', ',')}</span>`)).join('') : '<p class="muted" style="margin:0">Кормов нет.</p>'}</div>
     ${r.fuel.length ? `<div class="panel"><div class="eyebrow">ГСМ — остаток</div>${r.fuel.map(f => kv(esc(f.name) + (f.used ? ` <span class="muted">· выдано −${num(f.used)}</span>` : ''), `${num(f.bal)} ${esc(f.unit)}`)).join('')}</div>` : ''}
     <div class="panel"><div class="eyebrow">Здоровье и ветеринария</div>${kv('В норме', r.hi.pct + '%')}${kv('Здоровых', r.hi.ok)}${kv('На лечении', r.hi.treat)}${kv('Под наблюдением (карантин)', r.hi.watch)}${kv('Ветобработок за день', r.doneVet)}${d === today() ? kv('Запланировано на сегодня', r.vet) : ''}
       ${r.vetLow.length ? `<div class="eyebrow" style="margin-top:6px">Аптека — внимание</div>${r.vetLow.map(x => `<div class="sub">${esc(x)}</div>`).join('')}` : ''}</div>
@@ -1561,8 +1562,8 @@ function dailyXl(){
   if(r.births || r.gone) rows.push(['Поголовье', 'За день: окотов / детёнышей / выбыло', `${r.births} / ${r.kids} / ${r.gone}`]);
   r.milk.forEach(m => { const n = MILKNAME[m.sp]; rows.push(['Молоко', `Надой ${m.sp === 'goat' ? 'коз' : 'овец'} за сутки, л`, m.day], ['', `${n}: утро, л`, m.am], ['', `${n}: вечер, л`, m.pm], ['', `Дойное стадо ${m.sp === 'goat' ? 'коз' : 'овец'}, гол.`, m.n || ''], ['', `Средний удой на 1 ${m.sp === 'goat' ? 'козу' : 'овцу'}, л`, m.avg || ''], ['', `${n}: отгружено, л`, m.out], ['', `${n}: в танке на конец дня, л`, m.bal]); });
   rows.push(['Молоко', 'Всего за сутки, л', round(r.milk.reduce((x, m) => x + m.day, 0), 2)]);
-  r.feed.forEach((f, i) => rows.push([i ? '' : 'Корма — остаток', `${f.name}, ${f.unit}`, f.bal]));
-  r.fuel.forEach((f, i) => rows.push([i ? '' : 'ГСМ — остаток', `${f.name}, ${f.unit}`, f.bal]));
+  r.feed.forEach((f, i) => rows.push([i ? '' : 'Остатки по складу', f.name, f.bal]));
+  r.fuel.forEach((f, i) => rows.push([i ? '' : 'ГСМ', f.name, f.bal]));
   rows.push(['Здоровье', 'В норме, %', r.hi.pct], ['', 'Здоровых', r.hi.ok], ['', 'На лечении', r.hi.treat], ['', 'Под наблюдением', r.hi.watch], ['', 'Ветобработок за день', r.doneVet]);
   r.vetLow.forEach((x, i) => rows.push([i ? '' : 'Аптека — внимание', x, '']));
   const sh = {name:'Отчёт за день', title:`Берегиня — отчёт за ${fmtD(r.d)}`, note:'Поголовье — на момент выгрузки; молоко, корма и ГСМ — за день',
