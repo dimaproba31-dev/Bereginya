@@ -29,7 +29,7 @@ const STATUS = {active:'В стаде', sold:'Продан(а)', slaughter:'За
 const ET = {
   ill:{t:'Лечение', vet:1}, vac:{t:'Вакцинация', vet:1}, treat:{t:'Дегельминтизация', vet:1}, vit:{t:'Витаминизация', vet:1}, birth:{t:'Окот'},
   weight:{t:'Взвешивание'}, mating:{t:'Случка'}, shear:{t:'Стрижка'}, other:{t:'Другое'},
-  dose:{t:'Процедура по схеме', hide:1}, result:{t:'Результат лечения', hide:1}
+  dose:{t:'Процедура по схеме', hide:1}, result:{t:'Результат лечения', hide:1}, task:{t:'Дело по плану', hide:1}
 };
 const CAT = {
   expense:['Корма','ГСМ','Ветеринария','Покупка животных','Оборудование','Работа','Прочее'],
@@ -463,7 +463,7 @@ function planItems(){
 const urgency = date => { const d = daysBetween(today(), date); return d < 0 ? 'over' : d <= 7 ? 'soon' : 'later'; };
 
 /* ===== Отрисовка ===== */
-const NAV_OF = {daily:'home', events:'home', plan:'home', vet:'herd', people:'more', feedsheet:'more', log:'more', home:'home', herd:'herd', pens:'herd', milk:'milk', stock:'stock', more:'more', money:'more', stats:'more'};
+const NAV_OF = {yplan:'more', genetics:'more', daily:'home', events:'home', plan:'home', vet:'herd', people:'more', feedsheet:'more', log:'more', home:'home', herd:'herd', pens:'herd', milk:'milk', stock:'stock', more:'more', money:'more', stats:'more'};
 function updateClock(){ const c = $('#clock'); if(!c) return; const d = new Date(); c.innerHTML = `<b>${d.toLocaleDateString('ru-RU', {day:'numeric', month:'long', year:'numeric'}).replace(/\s*г\.?$/, '')}</b>${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 setInterval(updateClock, 30000);
 function render(){
@@ -473,16 +473,18 @@ function render(){
   const plan = planItems();
   const urgent = plan.filter(i => daysBetween(today(), i.date) <= 7).length;
   const b = $('#moreBadge'); b.hidden = true;
+  const feeder = isFeeder(); document.body.classList.toggle('feeder', feeder);
+  if(feeder){ if(!FEEDER_TABS.has(S.tab)) S.tab = 'home'; S.stockCat = 'feed'; }
   const ownBtn = document.querySelector(`nav.tabs button[data-tab="${S.tab}"]`), navKey = ownBtn && ownBtn.offsetParent ? S.tab : NAV_OF[S.tab];
   document.querySelectorAll('nav.tabs button').forEach(x => x.dataset.tab===navKey ? x.setAttribute('aria-current','page') : x.removeAttribute('aria-current'));
   v.classList.toggle('wide', S.tab==='home');
   { const n = todayCount(), eb = $('#evBadge'); if(eb){ eb.hidden = !n; eb.textContent = n; } }
   { const w = $('#who'); if(w){ w.hidden = !S.email; w.innerHTML = S.email ? `<b>${esc(whoName(S.email))}</b>${S.admin ? 'Администратор' : 'Сотрудник'}` : ''; } }
   updateClock();
-  $('#fab').hidden = !['herd','milk','stock','plan','money'].includes(S.tab) || (S.tab==='herd' && S.herdMode==='pens');
+  $('#fab').hidden = !['herd','milk','stock','plan','money'].includes(S.tab) || (S.tab==='herd' && S.herdMode==='pens') || (feeder && S.tab !== 'stock');
   let html = '';
   if(S.demo) html += `<div class="banner">Демо-режим: всё хранится только в этом браузере.${S.animals.some(a => a.demo) ? ` Сейчас открыт пример хозяйства. <button class="link adm" data-act="clear-demo">Очистить пример</button>` : ''}</div>`;
-  html += ({daily:dailyView, log:logView, people:peopleView, feedsheet:feedSheetView, vet:vetView, events:eventsView, home:homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
+  html += ({yplan:yplanView, genetics:genView, daily:dailyView, log:logView, people:peopleView, feedsheet:feedSheetView, vet:vetView, events:eventsView, home: feeder ? feederHome : homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
   const focus = document.activeElement?.id, pos = document.activeElement?.selectionStart;
   v.innerHTML = html;
   bindView();
@@ -568,6 +570,23 @@ const ICON = {
   move:'<path d="M4 7h13l-3-3M20 17H7l3 3"/>'
 };
 const ico = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
+/* ===== Главная кормача ===== */
+function feederHome(){
+  if(loading('items', 'moves')) return `<div class="empty"><p>Загружаем…</p></div>`;
+  const t = today(), bal = stockBalance(), feeds = itemsOf('feed');
+  const todayOps = S.moves.filter(m => m.date === t && itemById(m.item)?.cat === 'feed').sort((a, b) => (b.created || 0) - (a.created || 0));
+  const dateLabel = new Date().toLocaleDateString('ru-RU', {weekday:'long', day:'numeric', month:'long'});
+  return `<div class="hello"><h1>${dateLabel[0].toUpperCase() + dateLabel.slice(1)}</h1></div>
+    <div class="card quickcard"><div class="card-h"><h3>Корма</h3></div>
+      <button class="qa b" data-fmv="out">${ico('feed')}Расход корма</button>
+      <button class="qa g" data-fmv="in">${ico('plus')}Приход корма</button>
+      <button class="qa p" data-tab-go="feedsheet">${hico('report')}Табель кормления</button>
+      <button class="qa t" data-nav="herd" data-hm2="pens">${ico('move')}Стадо по загонам</button></div>
+    <div class="panel"><div class="kv"><span class="eyebrow">Остатки по складу</span><button class="link" data-nav="stock">Подробно</button></div>
+      ${feeds.length ? feeds.map(i => `<div class="kv"><span>${esc(i.name)}</span><strong class="${(bal[i.id] || 0) < 0 || (i.min > 0 && (bal[i.id] || 0) < i.min) ? 'money minus' : ''}">${String(round(bal[i.id] || 0, 2)).replace('.', ',')} ${esc(i.unit)}</strong></div>`).join('') : '<p class="muted" style="margin:0">Корма не заведены.</p>'}</div>
+    <div class="panel"><div class="eyebrow">Сегодня записано</div>${todayOps.length ? `<div class="list">${todayOps.map(moveRow).join('')}</div>` : '<p class="muted" style="margin:0">Сегодня ещё ничего не записано.</p>'}</div>`;
+}
+
 /* ===== Главная (панель) ===== */
 const HICON = {
   sheep:'<path d="M7 15c-2 0-3.5-1.4-3.5-3.2S5 8.6 7 8.8C7.6 7 9.2 6 11 6.2c1.2-1.2 3.6-1.2 4.8.2 1.9-.2 3.7 1.3 3.7 3.2 0 .3 0 .6-.1.9 1 .5 1.6 1.4 1.6 2.4 0 1.7-1.5 3.1-3.4 3.1"/><path d="M7 15h11M7 15v4M10 15.5V19M15 15.5V19M18 15v4"/>',
@@ -631,7 +650,7 @@ function calendarBox(){
     const past = S.events.filter(e => e.date === showDay && !['dose'].includes(e.type)).slice(0, 8).map(e => ({date:e.date, kind:'done', title:`${ET[e.type]?.t || 'Событие'}${e.scheme ? ' «' + e.scheme.name + '»' : e.drug ? ' · ' + e.drug : ''}`, sub:(e.animalIds || []).length === 1 ? animalLabel(byId(e.animalIds[0])) : heads((e.animalIds || []).length), attr:`data-evopen="${e.id}"`}));
     items = fut.concat(past);
   } else items = plan.slice(0, 4);
-  const kindIco = k => k === 'birth' ? hico('lamb') : k === 'stock' ? hico('feed') : k === 'done' ? hico('edit') : hico('syringe');
+  const kindIco = k => k === 'birth' ? hico('lamb') : k === 'stock' ? hico('feed') : k === 'done' ? hico('edit') : k === 'plan' ? hico('cal') : hico('syringe');
   return `<div class="card calcard"><div class="card-h"><h3>Календарь событий</h3><button class="link" data-nav="events" data-aghz2="month">Все</button></div>
     <div class="calnav"><button data-calm="-1" aria-label="Предыдущий месяц">‹</button><b>${title[0].toUpperCase() + title.slice(1)}</b><button data-calm="1" aria-label="Следующий месяц">›</button></div>
     <div class="cal">${['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(w => `<span class="wd">${w}</span>`).join('')}${cells}</div>
@@ -682,7 +701,7 @@ function homeView(){
         <button data-vnew="vit">${hico('syringe')}Витамини&shy;зация</button><button data-vnew="treat">${hico('syringe')}Дегельмин&shy;тизация</button>
         <button data-act="q-birth">${ico('birth')}Окот</button><button data-act="milkout">${ico('truck')}Отгрузка молока</button>
         <button data-act="q-feed">${ico('feed')}Приход корма</button><button data-act="q-fuel">${ico('fuel')}Заправка</button>
-        <button data-nav="herd" data-hm2="pens">${ico('move')}По загонам</button><button data-tab-go="feedsheet">${hico('report')}Табель</button><button data-act="excel">${hico('report')}Выгрузка в Excel</button><button data-tab-go="stats">${hico('report')}Сводка за год</button>
+        <button data-nav="herd" data-hm2="pens">${ico('move')}По загонам</button><button data-tab-go="feedsheet">${hico('report')}Табель</button><button data-act="excel">${hico('report')}Выгрузка в Excel</button><button data-tab-go="yplan">${hico('cal')}Годовой план</button><button data-tab-go="genetics">${hico('herd')}Генетика</button><button data-tab-go="stats">${hico('report')}Сводка за год</button>
       </div></div>
     </div>
     <div class="secs">
@@ -733,7 +752,7 @@ function herdView(){
   if(!listMode){
     const extra = ['nogroup','nopen','gone'].map(k => { const n = all.filter(FILTERS[k][1]).length; return n ? `<button class="gbtn soft" data-f="${k}"><span>${FILTERS[k][0]}</span><b>${n}</b></button>` : ''; }).join('');
     const vt = vetTasks().length, vc = activeCourses().length;
-    return search + `<button class="banner as-btn ${vt ? '' : 'soft'}" data-tab-go="vet">Ветеринария${vt ? `: сегодня ${vt} ${plural(vt, 'процедура', 'процедуры', 'процедур')}` : vc ? `: идёт курсов ${vc}` : ' — лечение, вакцинация, схемы'} ›</button><div class="hero"><div><div class="hero-l">Всего поголовье</div><div class="bignum">${act.length}</div></div><div class="hero-r"><span><i style="background:var(--sheep)"></i>Овцы <b>${nSheep}</b></span><span><i style="background:var(--goat)"></i>Козы <b>${nGoat}</b></span></div></div>
+    return search + `${isFeeder() ? '' : `<button class="banner as-btn ${vt ? '' : 'soft'}" data-tab-go="vet">Ветеринария${vt ? `: сегодня ${vt} ${plural(vt, 'процедура', 'процедуры', 'процедур')}` : vc ? `: идёт курсов ${vc}` : ' — лечение, вакцинация, схемы'} ›</button>`}<div class="hero"><div><div class="hero-l">Всего поголовье</div><div class="bignum">${act.length}</div></div><div class="hero-r"><span><i style="background:var(--sheep)"></i>Овцы <b>${nSheep}</b></span><span><i style="background:var(--goat)"></i>Козы <b>${nGoat}</b></span></div></div>
       ${block('sheep')}${block('goat')}
       ${extra ? `<div class="gblock"><div class="gtitle"><span>Требуют внимания</span></div><div class="ggrid">${extra}</div></div>` : ''}
       <button class="gbtn wide" data-f="active"><span>Весь список животных</span><b>${act.length} ›</b></button>`;
@@ -858,14 +877,19 @@ function milkChart(end, sp){
 
 /* ----- Склад ----- */
 function stockView(){
-  const cat = STOCK[S.stockCat] ? S.stockCat : 'feed';
-  let h = `<div class="segb" role="group" aria-label="Раздел склада">${Object.entries(STOCK).map(([k,l]) => `<button data-cat="${k}" aria-pressed="${cat===k}">${l}</button>`).join('')}</div>`;
+  const cat = isFeeder() ? 'feed' : STOCK[S.stockCat] ? S.stockCat : 'feed';
+  let h = isFeeder() ? '' : `<div class="segb" role="group" aria-label="Раздел склада">${Object.entries(STOCK).map(([k,l]) => `<button data-cat="${k}" aria-pressed="${cat===k}">${l}</button>`).join('')}</div>`;
   if(loading('items','moves')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
   return h + (cat==='tech' ? techView() : stockCatView(cat));
 }
 const itemsOf = cat => S.items.filter(i => i.cat===cat).sort((a,b) => a.name.localeCompare(b.name,'ru'));
 // Имена пользователей: задаёт администратор (settings/people → names: {почта: имя}). Подпись «внёс» видят только администраторы.
 const peopleNames = () => setting('people')?.names || {};
+const peopleRoles = () => setting('people')?.roles || {};
+const ROLES = {worker:'Сотрудник', feeder:'Кормач'};
+const roleOf = () => S.admin ? 'admin' : (S.local || S.demo) ? (S.demoRole || 'admin') : (peopleRoles()[String(S.email || '').toLowerCase()] || 'worker');
+const isFeeder = () => roleOf() === 'feeder';
+const FEEDER_TABS = new Set(['home', 'herd', 'pens', 'stock', 'feedsheet', 'more']);
 const whoName = e => { if(!e) return ''; const k = String(e).toLowerCase().trim(); return peopleNames()[k] || String(e).split('@')[0]; };
 const byLine = (e, word='внёс') => S.admin && e ? `${word}: ${whoName(e)}` : '';
 function knownEmails(){
@@ -878,23 +902,27 @@ function knownEmails(){
 function peopleView(){
   let h = backTo('Пользователи');
   if(!S.admin) return h + `<div class="empty"><p>Раздел недоступен.</p></div>`;
-  const names = peopleNames(), list = knownEmails();
-  h += `<p class="muted" style="margin:0">Впишите имя для каждой почты. Имя будет видно вам в журнале и в записях («внёс: Иван»). Работники эти подписи не видят. Самих пользователей добавляют в консоли Firebase (Authentication → Users).</p>
+  const names = peopleNames(), roles = peopleRoles(), list = knownEmails().filter(e => e !== String(S.email || '').toLowerCase());
+  const roleSel = (e, i) => `<select data-role="${esc(e)}" aria-label="Роль">${Object.entries(ROLES).map(([k, l]) => opt(k, l, roles[e] || 'worker')).join('')}</select>`;
+  h += `<p class="muted" style="margin:0">Для каждой почты — имя и роль. Имя видно вам в журнале и в записях («внёс: Иван»). <b>Сотрудник</b> вносит надои, окоты, обработки, склад. <b>Кормач</b> видит только склад кормов (остатки, приход, расход), табель кормления и стадо без изменений. Самих пользователей добавляют в консоли Firebase (Authentication → Users), потом впишите почту здесь.</p>
     <form id="pplf" novalidate><div class="ppl">${list.map((e, i) => `<div class="field"><label for="ppl-${i}" style="word-break:break-all">${esc(e)}</label>
-      <input id="ppl-${i}" name="${esc(e)}" value="${esc(names[e] || '')}" placeholder="имя, например Иван" autocomplete="off"></div>`).join('')}</div>
-    <div class="two">${fld('ppl-new','Ещё почта',`<input id="ppl-new" type="email" placeholder="ivan@mail.ru" autocomplete="off">`)}${fld('ppl-newn','Имя',`<input id="ppl-newn" placeholder="Иван" autocomplete="off">`)}</div>
+      <div class="two"><input id="ppl-${i}" name="${esc(e)}" value="${esc(names[e] || '')}" placeholder="имя, например Иван" autocomplete="off">${roleSel(e, i)}</div></div>`).join('')}</div>
+    <div class="eyebrow">Новый пользователь</div>
+    <div class="two">${fld('ppl-new','Почта',`<input id="ppl-new" type="email" placeholder="ivan@mail.ru" autocomplete="off">`)}${fld('ppl-newn','Имя',`<input id="ppl-newn" placeholder="Иван" autocomplete="off">`)}</div>
+    ${fld('ppl-newr','Роль',`<select id="ppl-newr">${Object.entries(ROLES).map(([k, l]) => opt(k, l, 'worker')).join('')}</select>`)}
     <p class="err" id="pplerr" hidden></p>
-    <div class="actions"><button class="btn primary" type="submit">Сохранить имена</button></div></form>`;
+    <div class="actions"><button class="btn primary" type="submit">Сохранить</button></div></form>`;
   return h;
 }
 function bindPeople(){
   const f = $('#pplf'); if(!f) return;
   f.onsubmit = ev => {
-    ev.preventDefault(); const out = {};
-    f.querySelectorAll('.ppl input').forEach(i => { const v = i.value.trim(); if(v) out[i.name] = v; });
-    const ne = f.querySelector('#ppl-new').value.trim().toLowerCase(), nn = f.querySelector('#ppl-newn').value.trim();
-    if(ne || nn){ if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ne) || !nn){ const e = f.querySelector('#pplerr'); e.hidden = false; e.textContent = 'Для новой строки укажите и почту, и имя.'; return; } out[ne] = nn; }
-    store.set('settings', 'people', {names: out}); toast('Имена сохранены'); setTimeout(render, 200);
+    ev.preventDefault(); const out = {...peopleNames()}, roles = {...peopleRoles()};
+    f.querySelectorAll('.ppl input').forEach(i => { const v = i.value.trim(); if(v) out[i.name] = v; else delete out[i.name]; });
+    f.querySelectorAll('[data-role]').forEach(sl => { if(sl.value === 'worker') delete roles[sl.dataset.role]; else roles[sl.dataset.role] = sl.value; });
+    const ne = f.querySelector('#ppl-new').value.trim().toLowerCase(), nn = f.querySelector('#ppl-newn').value.trim(), nr = f.querySelector('#ppl-newr').value;
+    if(ne || nn){ if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ne) || !nn){ const e = f.querySelector('#pplerr'); e.hidden = false; e.textContent = 'Для нового пользователя укажите и почту, и имя.'; return; } out[ne] = nn; if(nr !== 'worker') roles[ne] = nr; }
+    store.set('settings', 'people', {names: out, roles}); toast('Сохранено'); setTimeout(render, 200);
   };
 }
 const monthTitle = ym => { const s = parse(ym + '-01').toLocaleDateString('ru-RU', {month:'long', year:'numeric'}).replace(/\s*г\.?$/, ''); return s[0].toUpperCase() + s.slice(1); };
@@ -984,9 +1012,16 @@ function moveRow(m){
 
 /* ----- Ещё ----- */
 function moreView(){
+  if(isFeeder()) return `<div><div class="eyebrow">${esc(whoName(S.email))} · кормач</div><h2>Ещё</h2></div><div class="list">
+    <button class="row" data-tab-go="feedsheet" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Табель кормления</div><div class="sub">Скачать и распечатать</div></span><span class="side">›</span></button>
+    <button class="row" data-nav="stock" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Склад кормов</div><div class="sub">Остатки, приход, расход</div></span><span class="side">›</span></button>
+    <button class="row" data-nav="herd" data-hm2="pens" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Стадо по загонам</div><div class="sub">Только просмотр</div></span><span class="side">›</span></button></div>
+    ${S.local ? '' : `<div class="actions"><button class="btn" data-act="logout">Выйти из учётной записи</button></div>`}`;
   const plan = planItems(), soon = plan.filter(i => daysBetween(today(), i.date) <= 7).length;
   const row = (go, t, s) => `<button class="row" data-tab-go="${go}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${t}</div><div class="sub">${s}</div></span><span class="side">›</span></button>`;
   let h = `<div><div class="eyebrow">${esc(S.demo ? 'Демо' : S.local ? 'Учёт на этом устройстве' : (S.email||'') + (S.admin ? ' · администратор' : ''))}</div><h2>Ещё</h2></div><div class="list">
+    ${row('yplan','Годовой план и напоминания','Работа на год по месяцам, лаборатория, напоминания заранее')}
+    ${row('genetics','Генетика: подбор баранов','Родство, риск инбридинга, кого к какому барану')}
     ${row('daily','Отчёт за текущий день','Поголовье по группам, молоко и средний удой, остатки кормов')}
     ${row('events','События', 'Что сделать сегодня и что впереди: уколы, ревакцинации, окоты')}
     ${row('money','Финансы','Доходы и расходы по месяцам')}
@@ -1108,12 +1143,19 @@ function bindView(){
   on('[data-fin]', b => financeForm(S.finance.find(r => r.id===b.dataset.fin)));
   on('[data-m]', b => { const [y,m] = S.month.split('-').map(Number); S.month = iso(new Date(y, m-1+(+b.dataset.m), 1)).slice(0,7); render(); });
   on('[data-tab-go]', b => go(b.dataset.tabGo));
+  on('[data-fmv]', b => moveForm({cat:'feed', kind:b.dataset.fmv}));
   on('[data-evopen]', b => { const e = S.events.find(x => x.id===b.dataset.evopen); if(!e) return; if(e.course) courseSheet(e.course); else if(e.scheme) courseSheet(e.id); else if((e.animalIds||[]).length===1) animalCard(e.animalIds[0]); else eventForm(e); });
   on('[data-cday]', b => { S.calDay = S.calDay===b.dataset.cday ? '' : b.dataset.cday; render(); });
   on('[data-calm]', b => { const [y, m] = (S.calMonth || today().slice(0,7)).split('-').map(Number); S.calMonth = iso(new Date(y, m - 1 + (+b.dataset.calm), 1)).slice(0,7); S.calDay = ''; render(); });
   on('[data-chd]', b => { S.chartDays = +b.dataset.chd; render(); });
   on('[data-vsub]', b => { S.vetSub = b.dataset.vsub; render(); });
   on('[data-aghz]', b => { S.agHz = b.dataset.aghz; render(); });
+  on('[data-task]', b => { const v = b.dataset.task, i = v.lastIndexOf('|'); taskSheet(v.slice(0, i), v.slice(i + 1)); });
+  on('[data-routine]', b => routineForm(routineById(b.dataset.routine)));
+  on('[data-py]', b => { S.planYear = (S.planYear || +today().slice(0, 4)) + (+b.dataset.py); render(); });
+  on('[data-gsp]', b => { S.genSp = b.dataset.gsp; S.genSrc = ''; render(); });
+  on('[data-mate]', b => eventForm({type:'mating', sireId:b.dataset.mate, animalIds:b.dataset.ewes.split(',').filter(Boolean)}));
+  { const gs = document.querySelector('#g-src'); if(gs) gs.onchange = () => { S.genSrc = gs.value; render(); }; const gc = document.querySelector('#g-cap'); if(gc) gc.onchange = () => { S.genCap = +gc.value || 0; render(); }; }
   on('[data-dd]', b => { const n = addDays(S.dailyDate || today(), +b.dataset.dd); if(n <= today()){ S.dailyDate = n; render(); } });
   on('[data-agk]', b => { S.agKind = b.dataset.agk; render(); });
   on('[data-vkind]', b => { S.vetKind = b.dataset.vkind; render(); });
@@ -1130,7 +1172,7 @@ function bindView(){
   on('[data-restock]', b => moveForm({cat:'feed', kind:'in', item:b.dataset.restock}));
   on('[data-act]', b => ({
     'add-animal':() => animalForm(), 'add-fin':() => financeForm(), 'add-ration':() => rationForm(),
-    'add-item':() => itemForm({cat:S.stockCat}), 'daily-xl':dailyXl, 'daily-share':dailyShare, 'add-scheme':() => schemeForm(null, S.vetKind), 'seed-scheme':seedScheme, 'veh-all-gsm':allToGsm, 'seed-items':seedItems, 'milkout':() => milkOutForm(),
+    'add-item':() => itemForm({cat:S.stockCat}), 'add-routine':() => routineForm(null), 'seed-plan':seedPlan, 'plan-ics':planIcs, 'plan-xl':planXl, 'daily-xl':dailyXl, 'daily-share':dailyShare, 'add-scheme':() => schemeForm(null, S.vetKind), 'seed-scheme':seedScheme, 'veh-all-gsm':allToGsm, 'seed-items':seedItems, 'milkout':() => milkOutForm(),
     'feed-log':feedLogSheet, 'q-birth':() => eventForm({type:'birth'}), 'q-vet':() => eventForm({type:'vac'}), 'q-feed':() => moveForm({cat:'feed', kind:'in'}), 'q-fuel':() => moveForm({cat:'fuel', kind:'out'}), 'add-fuel':() => itemForm({cat:'fuel'}), 'add-vehicle':() => itemForm({cat:'vehicle'}), milkquick:() => milkQuickForm(S.milkDate||today(), defaultSession()), import:importSheet, regroup:() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); regroupSheet(ids, filterName(S.filter)); }, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
     logout:() => fb && fb.au.signOut(fb.auth)
   })[b.dataset.act]?.());
@@ -1452,7 +1494,7 @@ function agendaItems(to){
   });
   const bal = stockBalance();
   (S.items || []).filter(i => i.cat === 'vet' && i.expiry && (bal[i.id] || 0) > 0 && i.expiry <= to).forEach(i => out.push({date: i.expiry < t ? t : i.expiry, kind:'stock', title:`${i.expiry < t ? 'Просрочен' : 'Истекает срок'}: ${i.name}`, sub:`годен до ${fmtD(i.expiry)} · остаток ${num(bal[i.id])} ${i.unit}`, attr:`data-item="${i.id}"`, btn:'Открыть'}));
-  return out.sort((a, b) => a.date.localeCompare(b.date) || (a.kind === 'vet' ? -1 : 1));
+  return out.concat(planAgenda(to)).sort((a, b) => a.date.localeCompare(b.date) || (a.kind === 'vet' ? -1 : 1));
 }
 const todayCount = () => agendaItems(today()).filter(x => x.kind !== 'stock').length;
 function eventsView(){
@@ -1462,12 +1504,12 @@ function eventsView(){
   const to = {today:t, week:addDays(t, 7), month:addDays(t, 31), all:addDays(t, 400)}[hz];
   const all = agendaItems(to), list = all.filter(x => !kf || x.kind === kf);
   h += `<div class="segb" role="group">${[['today', 'Сегодня'], ['week', 'Неделя'], ['month', 'Месяц'], ['all', 'Всё']].map(([k, l]) => `<button data-aghz="${k}" aria-pressed="${hz === k}">${l}</button>`).join('')}</div>
-    <div class="chips" style="flex-wrap:wrap">${[['', 'Все', all.length], ['vet', 'Ветеринария', all.filter(x => x.kind === 'vet').length], ['birth', 'Окоты', all.filter(x => x.kind === 'birth').length], ['stock', 'Склад', all.filter(x => x.kind === 'stock').length]].map(([k, l, n]) => `<button class="chip" data-agk="${k}" aria-pressed="${kf === k}">${l}${n ? ' · ' + n : ''}</button>`).join('')}</div>`;
+    <div class="chips" style="flex-wrap:wrap">${[['', 'Все', all.length], ['vet', 'Ветеринария', all.filter(x => x.kind === 'vet').length], ['plan', 'План', all.filter(x => x.kind === 'plan').length], ['birth', 'Окоты', all.filter(x => x.kind === 'birth').length], ['stock', 'Склад', all.filter(x => x.kind === 'stock').length]].map(([k, l, n]) => `<button class="chip" data-agk="${k}" aria-pressed="${kf === k}">${l}${n ? ' · ' + n : ''}</button>`).join('')}</div>`;
   if(!list.length) return h + `<div class="empty"><p>${hz === 'today' ? 'На сегодня ничего не запланировано.' : 'В этот период ничего не запланировано.'}</p><p class="muted">Сюда попадают уколы и итоги по курсам лечения, ревакцинации и повторные обработки (если в схеме указан повтор), ожидаемые окоты и корма или препараты, которые заканчиваются.</p></div>`;
   const groups = {}; list.forEach(x => { const k = x.date < t ? 'over' : x.date; (groups[k] ||= []).push(x); });
   const label = k => k === 'over' ? 'Просрочено' : k === t ? 'Сегодня, ' + parse(k).toLocaleDateString('ru-RU', {day:'numeric', month:'long'}) : k === addDays(t, 1) ? 'Завтра, ' + parse(k).toLocaleDateString('ru-RU', {day:'numeric', month:'long'}) : (s => s[0].toUpperCase() + s.slice(1))(parse(k).toLocaleDateString('ru-RU', {weekday:'long', day:'numeric', month:'long'}));
   return h + Object.keys(groups).sort((a, b) => a === 'over' ? -1 : b === 'over' ? 1 : a.localeCompare(b)).map(k => `<div><div class="eyebrow ${k === 'over' ? 'money minus' : ''}">${label(k)}</div></div>
-    <div class="list">${groups[k].map(x => `<button class="row vtask" ${x.attr} style="grid-template-columns:1fr auto"><span class="main"><span class="pill ${x.kind === 'vet' ? 'ok' : x.kind === 'birth' ? 'warn' : ''}">${{vet:'ветеринария', birth:'окот', stock:'склад'}[x.kind]}${k === 'over' ? ' · ' + fmtShort(x.date) : ''}</span>
+    <div class="list">${groups[k].map(x => `<button class="row vtask" ${x.attr} style="grid-template-columns:1fr auto"><span class="main"><span class="pill ${x.kind === 'vet' ? 'ok' : x.kind === 'birth' ? 'warn' : x.kind === 'plan' ? 'plan' : ''}">${{vet:'ветеринария', birth:'окот', stock:'склад', plan:'план'}[x.kind]}${k === 'over' ? ' · ' + fmtShort(x.date) : ''}</span>
       <div class="name">${esc(x.title)}</div><div class="sub">${esc(x.sub)}</div></span><span class="side">${esc(x.btn)} ›</span></button>`).join('')}</div>`).join('');
 }
 
@@ -1577,6 +1619,258 @@ async function dailyShare(){
   catch(_){ openSheet('Отчёт текстом', `<textarea style="min-height:60vh" readonly>${esc(txt)}</textarea>`, () => {}, 'dtext'); }
 }
 
+/* ===== Годовой план и напоминания ===== */
+const RCAT = {vet:'Ветеринария', zoo:'Зоотехния', lab:'Лаборатория', other:'Прочее'};
+const MONTHS = ['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
+const MONTHS_G = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+// Базовый план для молочного МРС (сроки примерные — правьте под своё хозяйство и план районной ветстанции)
+const DEFAULT_PLAN = [
+  {title:'Пробы молока в лабораторию', cat:'lab', unit:'month', every:1, day:25, remind:7, note:'Отобрать пробы козьего и овечьего молока, оформить направление.'},
+  {title:'Контрольная дойка — надой по каждой голове', cat:'zoo', unit:'month', every:1, day:15, remind:2, note:'Записать надой по каждой голове утром и вечером («Молоко → ячейка»). Нужно для отбора и для генетики.'},
+  {title:'Осмотр и подрезка копыт', cat:'zoo', unit:'month', every:3, day:10, start:'2026-03-10', remind:7, note:'Раз в квартал; хромых — сразу на лечение.'},
+  {title:'Дегельминтизация перед выгоном на пастбище', cat:'vet', etype:'treat', unit:'year', month:3, day:20, remind:14, note:'За 2–3 недели до выгона. Препарат и дозу — по схеме «Дегельминтизация» и инструкции; через 10–14 дней — копрологический контроль.'},
+  {title:'Ревакцинация от клостридиозов — всё поголовье', cat:'vet', etype:'vac', unit:'year', month:3, day:25, remind:14, note:'Перед выгоном. Вакцина и кратность — по инструкции (напр. Клостбак-8).'},
+  {title:'Исследование крови на бруцеллёз', cat:'vet', unit:'year', month:4, day:1, remind:14, note:'Проводит районная ветстанция по своему плану противоэпизоотических мероприятий — уточните сроки у ветврача. Там же — сибирская язва и др. по плану района.'},
+  {title:'Обработка от клещей — 1-я (начало сезона)', cat:'vet', unit:'year', month:4, day:10, remind:7, note:'Перед выгоном и далее каждые 3–4 недели в сезон активности клещей.'},
+  {title:'Выгон на пастбище', cat:'zoo', unit:'year', month:4, day:15, remind:14, note:'Постепенный переход на зелёный корм за 7–10 дней, следить за тимпанией.'},
+  {title:'Генеральная дезинфекция помещений после выгона', cat:'vet', unit:'year', month:4, day:25, remind:7, note:'Механическая очистка, побелка, дезинфекция.'},
+  {title:'Обработка от клещей — 2-я', cat:'vet', unit:'year', month:5, day:10, remind:7},
+  {title:'Стрижка овец', cat:'zoo', unit:'year', month:5, day:20, remind:14, note:'В сухую погоду; суягных — аккуратно.'},
+  {title:'Обработка от эктопаразитов после стрижки', cat:'vet', unit:'year', month:6, day:5, remind:7, note:'Через 10–14 дней после стрижки (вши, кровососки, чесотка).'},
+  {title:'Обработка от клещей — 3-я', cat:'vet', unit:'year', month:6, day:10, remind:7},
+  {title:'Подготовка к случке: бонитировка и отбор', cat:'zoo', unit:'year', month:7, day:1, remind:14, note:'Отбраковка, формирование групп маток, проверка баранов. Подбор пар — «Ещё → Генетика».'},
+  {title:'Дегельминтизация и витаминизация маток и баранов перед случкой', cat:'vet', etype:'treat', unit:'year', month:7, day:10, remind:7, note:'За 3–4 недели до случки; витамины (Е-селен и др.) — по схеме «Витаминизация». Усиленное кормление маток 2–3 недели (флашинг).'},
+  {title:'Начало случки', cat:'zoo', unit:'year', month:8, day:1, remind:14, note:'Записывайте случку с бараном («Случка» в карточке) — программа посчитает окот, запуск и вакцинацию перед окотом.'},
+  {title:'Обработка от клещей — осенняя', cat:'vet', unit:'year', month:9, day:10, remind:7},
+  {title:'УЗИ на суягность / сукозность', cat:'zoo', unit:'year', month:9, day:15, remind:7, note:'Через 35–45 дней после случки; холостых — на повторную случку или в отбор.'},
+  {title:'Проверка запасов кормов на зиму', cat:'other', unit:'year', month:9, day:30, remind:7, note:'Сено, солома, зерно — хватит ли до выгона (Склад → Остаток).'},
+  {title:'Постановка на зимнее содержание: ремонт и дезинфекция помещений', cat:'vet', unit:'year', month:10, day:25, remind:14},
+  {title:'Обработка от эктопаразитов перед зимой', cat:'vet', unit:'year', month:11, day:1, remind:7},
+  {title:'Дегельминтизация после пастбищного сезона', cat:'vet', etype:'treat', unit:'year', month:11, day:10, remind:14, note:'После первых заморозков, при постановке на стойловое содержание.'},
+  {title:'Дезинфекция родильного отделения перед окотом', cat:'vet', unit:'year', month:12, day:15, remind:7, note:'Перед началом окотов: чистка, побелка, свежая подстилка, кугли.'}
+];
+const routines = () => setting('routines')?.list || [];
+const routineById = id => routines().find(r => r.id === id);
+function saveRoutines(list){ store.set('settings', 'routines', {list}); }
+const dim = (y, m) => new Date(y, m, 0).getDate();
+const ymd = (y, m, d) => `${y}-${pad(m)}-${pad(Math.min(d, dim(y, m)))}`;
+function occurrences(r, from, to){
+  const out = [], fy = +from.slice(0, 4), ty = +to.slice(0, 4);
+  if(r.unit === 'once'){ if(r.start >= from && r.start <= to) out.push(r.start); return out; }
+  if(r.unit === 'year'){ for(let y = fy; y <= ty; y++){ const d = ymd(y, +r.month || 1, +r.day || 1); if(d >= from && d <= to) out.push(d); } return out; }
+  if(r.unit === 'month'){
+    const st = r.start || '2026-01-01', ev = Math.max(1, +r.every || 1); let y = +st.slice(0, 4), m = +st.slice(5, 7);
+    while(y < fy - 1){ m += ev; while(m > 12){ m -= 12; y++; } }
+    for(let k = 0; k < 400; k++){ const d = ymd(y, m, +r.day || 1); if(d > to) break; if(d >= from) out.push(d); m += ev; while(m > 12){ m -= 12; y++; } }
+    return out;
+  }
+  const step = Math.max(1, +r.every || 1) * (r.unit === 'week' ? 7 : 1); let d = r.start || today();
+  if(d < from){ const k = Math.floor(daysBetween(d, from) / step); d = addDays(d, k * step); }
+  for(let k = 0; k < 400 && d <= to; k++, d = addDays(d, step)) if(d >= from) out.push(d);
+  return out;
+}
+const taskDone = (key, due) => S.events.some(e => e.type === 'task' && e.routine === key && e.due === due);
+const repeatText = r => r.unit === 'year' ? `каждый год, ${r.day} ${MONTHS_G[(+r.month || 1) - 1]}` : r.unit === 'month' ? (+r.every > 1 ? `каждые ${r.every} мес., ${r.day}-го числа` : `каждый месяц, ${r.day}-го числа`) : r.unit === 'week' ? `каждые ${r.every || 1} нед.` : r.unit === 'day' ? `каждые ${r.every || 1} дн.` : `один раз, ${fmtD(r.start)}`;
+// Напоминания от окотов и рождения молодняка
+function autoPlanItems(from, to){
+  const out = [], t = today();
+  const births = planItems().filter(i => i.kind === 'birth');
+  const byDue = {}; births.forEach(i => (byDue[i.date] ||= []).push(i.animal));
+  Object.entries(byDue).forEach(([due, an]) => {
+    const tags = an.map(a => a.tag), ids = an.map(a => a.id), ln = `${heads(an.length)} · № ${tags.slice(0, 8).join(', ')}${tags.length > 8 ? '…' : ''}`;
+    [[-60, 'zap', 'Запуск маток (прекратить доение) — за 60 дней до окота', 'other', ''], [-35, 'pvac', 'Вакцинация маток от клостридиозов перед окотом', 'vac', 'Создаёт колостральный иммунитет у ягнят/козлят. Вакцина и срок — по инструкции.'], [-14, 'pvit', 'Витаминизация маток перед окотом (Е-селен и др.)', 'vit', '']]
+      .forEach(([off, k, title, etype, note]) => { const d = addDays(due, off); if(d >= from && d <= to) out.push({key:`auto-${k}-${due}`, due:d, title, sub:`окот ~${fmtD(due)} · ${ln}`, cat:'vet', etype, ids, note, remind:3}); });
+  });
+  const kids = S.animals.filter(a => a.status === 'active' && a.birth && daysBetween(a.birth, t) <= 120 && daysBetween(a.birth, t) >= -1);
+  const byWeek = {}; kids.forEach(a => { const d = parse(a.birth); const mon = addDays(a.birth, -((d.getDay() + 6) % 7)); (byWeek[mon] ||= []).push(a); });
+  Object.entries(byWeek).forEach(([wk, an]) => {
+    const ids = an.map(a => a.id), ln = `${heads(an.length)} рожд. ${fmtShort(wk)}–${fmtShort(addDays(wk, 6))} · № ${an.slice(0, 8).map(a => a.tag).join(', ')}${an.length > 8 ? '…' : ''}`;
+    [[14, 'ksel', 'Молодняк: Е-селен / витамины (2–3 недели)', 'vit'], [42, 'kvac1', 'Молодняк: вакцинация от клостридиозов (6–8 недель)', 'vac'], [63, 'kvac2', 'Молодняк: ревакцинация через 21 день', 'vac'], [90, 'kdew', 'Молодняк: первая дегельминтизация (3 месяца)', 'treat']]
+      .forEach(([off, k, title, etype]) => { const d = addDays(wk, off + 3); if(d >= from && d <= to) out.push({key:`auto-${k}-${wk}`, due:d, title, sub:ln, cat:'vet', etype, ids, remind:3}); });
+  });
+  return out;
+}
+function planTasks(from, to){
+  const out = [];
+  routines().forEach(r => occurrences(r, from, to).forEach(d => out.push({key:r.id, due:d, title:r.title, sub:repeatText(r), cat:r.cat || 'other', etype:r.etype || '', note:r.note || '', remind:+r.remind || 0, r})));
+  return out.concat(autoPlanItems(from, to)).map(x => ({...x, done:taskDone(x.key, x.due)}));
+}
+// Для «Событий»: невыполненные дела с наступившим сроком напоминания
+function planAgenda(to){
+  const t = today();
+  return planTasks(addDays(t, -45), addDays(to > t ? to : t, 60)).filter(x => !x.done && (x.due <= to || addDays(x.due, -x.remind) <= t)
+    && !(x.r && x.r.created && x.due < x.r.created) && x.due >= addDays(t, x.r ? -30 : -14)).map(x => {
+    const dd = daysBetween(t, x.due);
+    return {date:x.due, kind:'plan', title:x.title, sub:`${dd > 0 ? `через ${dd} ${plural(dd, 'день', 'дня', 'дней')} · ` : ''}${x.sub}`, attr:`data-task="${esc(x.key)}|${x.due}"`, btn: dd > 0 ? 'Открыть' : 'Сделано'};
+  });
+}
+function taskSheet(key, due){
+  const x = planTasks(addDays(due, -1), addDays(due, 1)).find(y => y.key === key && y.due === due); if(!x) return;
+  const done = S.events.find(e => e.type === 'task' && e.routine === key && e.due === due);
+  const body = `<div class="panel"><div class="eyebrow">${RCAT[x.cat] || ''} · ${fmtD(due)}</div><div class="name" style="font-weight:600">${esc(x.title)}</div><div class="sub">${esc(x.sub)}</div>${x.note ? `<p class="muted" style="margin:6px 0 0">${esc(x.note)}</p>` : ''}</div>
+    ${done ? `<p class="pill ok" style="align-self:flex-start">Сделано ${fmtD(done.date)}${S.admin && done.byEmail ? ' · ' + esc(whoName(done.byEmail)) : ''}</p>` : `
+    ${fld('tk-note', 'Заметка (необязательно)', `<input id="tk-note" autocomplete="off">`)}
+    <div class="actions"><button class="btn primary" id="tkdone">Отметить: сделано</button>${x.etype && ET[x.etype] ? `<button class="btn" id="tkev">Записать: ${ET[x.etype].t.toLowerCase()}</button>` : ''}</div>`}
+    ${x.r && S.admin ? `<div class="actions"><button class="btn" id="tkedit">Изменить дело в плане</button></div>` : ''}`;
+  openSheet('Дело по плану', body, s => {
+    const mark = () => store.add('events', {type:'task', routine:key, due, date:today(), title:x.title, animalIds:x.ids || [], note:s.querySelector('#tk-note')?.value.trim() || ''});
+    const d1 = s.querySelector('#tkdone'); if(d1) d1.onclick = () => { mark(); toast('Отмечено: ' + x.title); closeSheet(); };
+    const d2 = s.querySelector('#tkev'); if(d2) d2.onclick = () => { mark(); eventForm({type:x.etype, animalIds:x.ids && x.ids.length ? x.ids : [], note:x.title}); };
+    const d3 = s.querySelector('#tkedit'); if(d3) d3.onclick = () => routineForm(x.r);
+  }, 'task');
+}
+function routineForm(r){
+  const isEdit = !!r?.id, v = {cat:'vet', unit:'year', every:1, month:new Date().getMonth() + 1, day:1, remind:7, start:today(), ...r};
+  const body = `<form id="rtf" novalidate>
+    ${fld('rt-title', 'Что сделать *', `<input id="rt-title" value="${esc(v.title)}" placeholder="напр. Пробы молока в лабораторию" autocomplete="off">`)}
+    <div class="two">${fld('rt-cat', 'Раздел', `<select id="rt-cat">${Object.entries(RCAT).map(([k, l]) => opt(k, l, v.cat)).join('')}</select>`)}
+      ${fld('rt-unit', 'Повтор', `<select id="rt-unit">${[['year', 'раз в год'], ['month', 'раз в N месяцев'], ['week', 'раз в N недель'], ['day', 'раз в N дней'], ['once', 'один раз']].map(([k, l]) => opt(k, l, v.unit)).join('')}</select>`)}</div>
+    <div class="two" id="rt-ym">${fld('rt-month', 'Месяц', `<select id="rt-month">${MONTHS.map((m, i) => opt(String(i + 1), m, String(v.month))).join('')}</select>`)}${fld('rt-day', 'Число', `<input id="rt-day" type="number" min="1" max="31" inputmode="numeric" value="${esc(v.day)}">`)}</div>
+    <div class="two" id="rt-ev">${fld('rt-every', 'Каждые', `<input id="rt-every" type="number" min="1" inputmode="numeric" value="${esc(v.every)}">`)}${fld('rt-start', 'Начиная с', `<input id="rt-start" type="date" value="${esc(v.start)}">`)}</div>
+    <div class="two">${fld('rt-remind', 'Напомнить за, дней', `<input id="rt-remind" type="number" min="0" inputmode="numeric" value="${esc(v.remind)}">`)}
+      ${fld('rt-et', 'Записать как', `<select id="rt-et">${opt('', '—', v.etype || '')}${['ill', 'vac', 'treat', 'vit'].map(k => opt(k, ET[k].t, v.etype)).join('')}</select>`)}</div>
+    ${fld('rt-note', 'Пояснение', `<textarea id="rt-note">${esc(v.note)}</textarea>`)}
+    <p class="muted" id="rt-sum" style="margin:0"></p>
+    <p class="err" id="rterr" hidden></p>
+    <div class="actions"><button class="btn primary" type="submit">${isEdit ? 'Сохранить' : 'Добавить в план'}</button></div>
+    ${isEdit ? `<div class="actions"><button class="btn danger" type="button" id="rtdel">Удалить из плана</button></div><div id="rtdelc"></div>` : ''}</form>`;
+  openSheet(isEdit ? 'Дело в плане' : 'Новое дело в плане', body, s => {
+    const f = s.querySelector('#rtf'), g = id => s.querySelector('#' + id).value;
+    const read = () => { const u = g('rt-unit'); return {created:today(), ...(r || {}), id: v.id || 'r' + Date.now().toString(36), title:g('rt-title').trim(), cat:g('rt-cat'), unit:u, month:+g('rt-month'), day:Math.min(31, Math.max(1, +g('rt-day') || 1)), every:Math.max(1, +g('rt-every') || 1), start:g('rt-start') || today(), remind:Math.max(0, +g('rt-remind') || 0), etype:g('rt-et'), note:g('rt-note').trim()}; };
+    const sync = () => { const u = g('rt-unit'); s.querySelector('#rt-month').closest('.field').hidden = u !== 'year'; s.querySelector('#rt-day').closest('.field').hidden = !['year', 'month'].includes(u);
+      s.querySelector('#rt-every').closest('.field').hidden = ['year', 'once'].includes(u); s.querySelector('#rt-start').closest('.field').hidden = u === 'year';
+      const x = read(), nx = occurrences(x, today(), addDays(today(), 800))[0]; s.querySelector('#rt-sum').textContent = `${repeatText(x)}${nx ? ` · ближайший раз ${fmtD(nx)}, напоминание с ${fmtD(addDays(nx, -x.remind))}` : ''}`; };
+    f.oninput = sync; f.onchange = sync; sync();
+    f.onsubmit = ev => { ev.preventDefault(); const x = read(); if(!x.title){ const e = s.querySelector('#rterr'); e.hidden = false; e.textContent = 'Напишите, что сделать.'; return; }
+      saveRoutines(routines().filter(y => y.id !== x.id).concat([x])); toast('План сохранён'); closeSheet(); };
+    const del = s.querySelector('#rtdel'); if(del) del.onclick = () => askConfirm(s.querySelector('#rtdelc'), 'Удалить это дело из плана?', () => { saveRoutines(routines().filter(y => y.id !== v.id)); toast('Удалено'); closeSheet(); });
+  }, 'rtform');
+}
+function seedPlan(){
+  const have = new Set(routines().map(r => norm(r.title)));
+  const add = DEFAULT_PLAN.filter(p => !have.has(norm(p.title))).map((p, i) => ({...p, id:'r' + Date.now().toString(36) + i, created:today()}));
+  saveRoutines(routines().concat(add)); toast(`В план добавлено дел: ${add.length}`);
+}
+function yplanView(){
+  let h = `<button class="back" data-tab-go="more">‹ Ещё</button><h2 class="page">Годовой план и напоминания</h2>`;
+  if(loading('events', 'settings')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
+  const y = S.planYear || +today().slice(0, 4), list = routines();
+  h += `<div class="actions"><button class="btn primary adm" data-act="add-routine">+ Добавить дело</button><button class="btn" data-act="plan-ics">В календарь телефона</button><button class="btn" data-act="plan-xl">Скачать в Excel</button></div>`;
+  if(!list.length) h += `<div class="empty"><p>План пока пустой. Можно загрузить базовый план работы с молочным стадом на год (${DEFAULT_PLAN.length} дел): обработки перед выгоном и постановкой, клещи, стрижка, подготовка к случке, УЗИ, дезинфекция, ежемесячные пробы молока в лабораторию — и поправить сроки под себя.</p><div class="actions"><button class="btn primary adm" data-act="seed-plan">Загрузить базовый план</button></div></div>`;
+  const tasks = planTasks(`${y}-01-01`, `${y}-12-31`);
+  const monthly = list.filter(r => r.unit !== 'year' && r.unit !== 'once');
+  h += `<div class="monthsel"><button data-py="-1" aria-label="Прошлый год">‹</button><h2>${y} год</h2><button data-py="1" aria-label="Следующий год">›</button></div>`;
+  if(monthly.length) h += `<div class="panel"><div class="eyebrow">Регулярно в течение года</div>${monthly.map(r => `<button class="row" data-routine="${r.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name" style="white-space:normal">${esc(r.title)}</div><div class="sub">${esc(repeatText(r))} · напомнить за ${r.remind} дн.</div></span><span class="side">›</span></button>`).join('')}</div>`;
+  const t = today();
+  h += `<div class="ygrid">` + MONTHS.map((mn, i) => {
+    const m = i + 1, items = tasks.filter(x => +x.due.slice(5, 7) === m && !(x.r && x.r.unit !== 'year' && x.r.unit !== 'once')).sort((a, b) => a.due.localeCompare(b.due));
+    const cur = y === +t.slice(0, 4) && m === +t.slice(5, 7);
+    return `<div class="panel ${cur ? 'curm' : ''}"><div class="eyebrow">${mn[0].toUpperCase() + mn.slice(1)}${cur ? ' · сейчас' : ''}</div>${items.length ? items.map(x => `<button class="yrow" data-task="${esc(x.key)}|${x.due}"><span class="yd">${+x.due.slice(8)}</span><span class="yt"><b>${esc(x.title)}</b><small>${RCAT[x.cat] || ''}${x.key.startsWith('auto-') ? ' · ' + esc(x.sub) : ''}</small></span>${(() => { const before = x.r && x.r.created && x.due < x.r.created; return `<span class="pill ${x.done ? 'ok' : x.due < t && !before ? 'bad' : ''}">${x.done ? 'сделано' : before ? 'прошло' : x.due < t ? 'не отмечено' : 'план'}</span>`; })()}</button>`).join('') : '<p class="muted" style="margin:0">—</p>'}</div>`;
+  }).join('') + `</div>`;
+  h += `<p class="muted" style="margin:0">Напоминания появляются в «Событиях» и на главной за указанное число дней. Запуск маток, вакцинация перед окотом и обработки молодняка считаются сами — от записанных случек и дат рождения. «В календарь телефона» — файл для календаря: телефон сам напомнит, даже если приложение закрыто. Сроки обработок примерные — уточните у вашего ветврача и в плане районной ветстанции.</p>`;
+  return h;
+}
+function planXl(){
+  const y = S.planYear || +today().slice(0, 4), rows = planTasks(`${y}-01-01`, `${y}-12-31`).sort((a, b) => a.due.localeCompare(b.due))
+    .map(x => [x.due, MONTHS[+x.due.slice(5, 7) - 1], x.title, RCAT[x.cat] || '', x.r ? repeatText(x.r) : x.sub, x.remind, x.done ? 'сделано' : '', x.note || '']);
+  const sh = {name:'Годовой план', title:`Годовой план работы — ${y}`, note:'Сроки обработок уточняйте у ветврача и по плану районной ветстанции',
+    cols:[{h:'Дата', w:12, t:'d'}, {h:'Месяц', w:10}, {h:'Что сделать', w:46}, {h:'Раздел', w:14}, {h:'Повтор / животные', w:34}, {h:'Напомнить за, дн.', w:10, t:'i'}, {h:'Отметка', w:10}, {h:'Пояснение', w:60}], rows};
+  saveFile(`Годовой план ${y}.xlsx`, XL.build([sh])).then(ok => ok && toast('План сохранён в «Загрузки»'));
+}
+function planIcs(){
+  const list = routines(); if(!list.length){ toast('План пустой'); return; }
+  const t = today(), stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
+  const esc2 = s => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+  const fold = l => { const enc = new TextEncoder(), parts = []; let cur = '', n = 0; for(const ch of l){ const b = enc.encode(ch).length; if(n + b > 72){ parts.push(cur); cur = ''; n = 1; } cur += ch; n += b; } parts.push(cur); return parts.join('\r\n '); };
+  const ev = list.map(r => {
+    const first = occurrences(r, t, addDays(t, 800))[0]; if(!first) return '';
+    const rr = r.unit === 'year' ? 'RRULE:FREQ=YEARLY' : r.unit === 'month' ? `RRULE:FREQ=MONTHLY;INTERVAL=${r.every || 1}` : r.unit === 'week' ? `RRULE:FREQ=WEEKLY;INTERVAL=${r.every || 1}` : r.unit === 'day' ? `RRULE:FREQ=DAILY;INTERVAL=${r.every || 1}` : '';
+    const d = first.replace(/-/g, ''), d2 = addDays(first, 1).replace(/-/g, ''), rem = Math.max(0, +r.remind || 0);
+    return ['BEGIN:VEVENT', `UID:${r.id}@bereginya`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${d}`, `DTEND;VALUE=DATE:${d2}`, rr, fold(`SUMMARY:Берегиня: ${esc2(r.title)}`), fold(`DESCRIPTION:${esc2(r.note)}`),
+      'BEGIN:VALARM', 'ACTION:DISPLAY', fold(`DESCRIPTION:${esc2(r.title)}`), `TRIGGER:${rem ? `-P${rem - 1}DT15H` : 'PT9H'}`, 'END:VALARM',
+      ...(rem > 1 ? ['BEGIN:VALARM', 'ACTION:DISPLAY', fold(`DESCRIPTION:${esc2(r.title)}`), 'TRIGGER:PT9H', 'END:VALARM'] : []), 'END:VEVENT'].filter(Boolean).join('\r\n');
+  }).filter(Boolean);
+  const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Bereginya//RU', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:Берегиня — план', ...ev, 'END:VCALENDAR'].join('\r\n');
+  saveFile('Берегиня — годовой план.ics', new Blob([ics], {type:'text/calendar'})).then(ok => ok && toast('Файл сохранён — откройте его, чтобы добавить в календарь'));
+}
+
+/* ===== Генетика: родство и подбор производителей ===== */
+// Отец животного: из карточки или из записи случки/окота
+function sireOf(a){
+  if(!a) return '';
+  if(a.fatherId) return a.fatherId;
+  if(a.motherId && a.birth){ const b = S.events.find(e => e.type === 'birth' && e.sireId && e.date === a.birth && (e.animalIds || []).includes(a.motherId)); if(b) return b.sireId; }
+  return '';
+}
+// Предки с длиной пути (поколений), до 5 поколений
+function ancestors(id, max = 5){
+  const out = {}; const walk = (x, n) => { if(!x || n > max) return; (out[x] ||= []).push(n); const a = byId(x); if(!a) return; walk(a.motherId, n + 1); walk(sireOf(a), n + 1); };
+  walk(id, 0); return out;
+}
+// Коэффициент родства пары (= инбридинг потомка по Райту, без учёта инбридинга предков)
+function kinship(x, y, cache){
+  const ax = cache?.[x] || ancestors(x), ay = cache?.[y] || ancestors(y); let f = 0;
+  for(const k in ax){ if(!ay[k]) continue; for(const p of ax[k]) for(const q of ay[k]) if(p + q > 0) f += Math.pow(0.5, p + q + 1); }
+  return f;
+}
+function relationName(ram, ewe){
+  const e = byId(ewe), r = byId(ram); if(!e || !r) return '';
+  const es = sireOf(e), rs = sireOf(r);
+  if(es === ram) return 'отец матки';
+  if(r.motherId === ewe) return 'мать барана';
+  if(e.motherId && byId(e.motherId) && sireOf(byId(e.motherId)) === ram) return 'дед матки';
+  if(es && es === rs && e.motherId && e.motherId === r.motherId) return 'полный брат';
+  if(es && es === rs) return 'общий отец';
+  if(e.motherId && e.motherId === r.motherId) return 'общая мать';
+  return 'родство по предкам';
+}
+const daughtersMilk = ram => { const d = S.animals.filter(a => a.sex === 'f' && sireOf(a) === ram); const vals = d.map(a => animalMilk(a.id, 30)?.avg).filter(v => v > 0); return {n:d.length, milkN:vals.length, avg: vals.length ? vals.reduce((x, y) => x + y, 0) / vals.length : 0}; };
+function genView(){
+  let h = `<button class="back" data-tab-go="more">‹ Ещё</button><h2 class="page">Генетика: подбор баранов</h2>`;
+  if(loading('animals', 'events')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
+  const sp = S.genSp || 'sheep', act = S.animals.filter(a => a.status === 'active' && a.species === sp);
+  const src = S.genSrc || 'adult';
+  const groupsF = GROUPS[sp].filter(([g]) => ['milk', 'preg', 'repl', 'yarki', 'quar'].includes(g));
+  const pensF = PENS.filter(p => act.some(a => a.pen === p.id && a.sex === 'f'));
+  let ewes = act.filter(a => a.sex === 'f' && adult(a));
+  if(src.startsWith('g:')) ewes = act.filter(a => a.sex === 'f' && groupOf(a) === src.slice(2));
+  else if(src.startsWith('p:')) ewes = act.filter(a => a.sex === 'f' && a.pen === src.slice(2));
+  else if(src === 'all') ewes = act.filter(a => a.sex === 'f');
+  let rams = act.filter(a => a.sex === 'm' && ['ram', 'buck'].includes(groupOf(a)));
+  if(!rams.length) rams = act.filter(a => a.sex === 'm' && adult(a) && groupOf(a) !== 'meat');
+  h += `<div class="segb" role="group">${[['sheep', 'Овцы и бараны'], ['goat', 'Козы и козлы']].map(([k, l]) => `<button data-gsp="${k}" aria-pressed="${sp === k}">${l}</button>`).join('')}</div>
+    ${fld('g-src', 'Какие матки', `<select id="g-src">${opt('adult', 'Все взрослые самки', src)}${opt('all', 'Все самки, включая молодняк', src)}<optgroup label="Группы">${groupsF.map(([g, l]) => opt('g:' + g, l, src)).join('')}</optgroup><optgroup label="Загоны">${pensF.map(p => opt('p:' + p.id, penShort(p.id) + (penLabel(p.id) ? ' — ' + penLabel(p.id) : ''), src)).join('')}</optgroup></select>`)}`;
+  const withPed = ewes.filter(a => a.motherId || sireOf(a)).length, ramPed = rams.filter(a => a.motherId || sireOf(a)).length;
+  const cache = {}; [...ewes, ...rams].forEach(a => cache[a.id] = ancestors(a.id));
+  const F = {}; rams.forEach(r => { F[r.id] = {}; ewes.forEach(e => F[r.id][e.id] = kinship(r.id, e.id, cache)); });
+  const stats = rams.map(r => { const fs = ewes.map(e => F[r.id][e.id]); const close = fs.filter(f => f >= 0.125).length, rel = fs.filter(f => f > 0).length; const dm = daughtersMilk(r.id);
+    const breedMis = ewes.filter(e => e.breed && r.breed && norm(e.breed) !== norm(r.breed)).length;
+    return {r, close, rel, avgF: fs.length ? fs.reduce((x, y) => x + y, 0) / fs.length : 0, dm, breedMis, age:ageMonths(r.birth)}; })
+    .sort((a, b) => a.close - b.close || a.rel - b.rel || b.dm.avg - a.dm.avg || a.breedMis - b.breedMis);
+  // распределение маток: каждой — производитель с наименьшим родством (при равенстве — лучший по рейтингу)
+  const rank = Object.fromEntries(stats.map((s, i) => [s.r.id, i])), assign = {}, cant = [];
+  const cap = Math.max(1, +S.genCap || (sp === 'goat' ? 30 : 40)), load = {};
+  const okRams = e => rams.filter(r => F[r.id][e.id] < 0.125);
+  ewes.slice().sort((a, b) => okRams(a).length - okRams(b).length).forEach(e => {
+    const order = rams.slice().sort((a, b) => (F[a.id][e.id] >= 0.125) - (F[b.id][e.id] >= 0.125) || ((load[a.id] || 0) >= cap) - ((load[b.id] || 0) >= cap) || F[a.id][e.id] - F[b.id][e.id] || rank[a.id] - rank[b.id]);
+    const best = order[0]; if(!best) return; if(F[best.id][e.id] >= 0.125) cant.push(e); load[best.id] = (load[best.id] || 0) + 1; (assign[best.id] ||= []).push(e); });
+  Object.values(assign).forEach(l => l.sort(tagSort));
+  h += `<div class="stats"><div class="stat"><div class="v">${ewes.length}</div><div class="l">маток в подборе · родословная известна у ${withPed}</div></div><div class="stat"><div class="v">${rams.length}</div><div class="l">${sp === 'goat' ? 'козлов' : 'баранов'}-производителей · родословная у ${ramPed}</div></div></div>`;
+  if(!rams.length) return h + `<div class="empty"><p>Нет производителей. Переведите ${sp === 'goat' ? 'козлов' : 'баранов'} в группу «${sp === 'goat' ? 'Козлы-производители' : 'Бараны-производители'}».</p></div>`;
+  if(withPed < ewes.length * 0.3) h += `<div class="banner">Родословная известна мало у кого — программа не видит родства там, где не записаны мать и отец. Чтобы подбор работал: при окоте указывайте отца, записывайте случку с бараном, в карточках впишите мать и отца, где знаете.</div>`;
+  h += `<div class="panel"><div class="eyebrow">Рейтинг производителей для этих маток</div>${stats.map((s, i) => `<button class="row" data-open="${s.r.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${i === 0 ? '★ ' : ''}${esc(animalLabel(s.r))}${s.r.breed ? ` <span class="muted">· ${esc(s.r.breed)}</span>` : ''}</div>
+      <div class="sub" style="white-space:normal">${s.close ? `<b class="money minus">близкие родственники: ${s.close}</b> · ` : ''}${s.rel ? `в родстве: ${s.rel}` : 'родства не найдено'} · дочерей ${s.dm.n}${s.dm.milkN ? `, удой дочерей ${num(round(s.dm.avg, 2))} л/сут` : ''}${s.age != null ? ` · возраст ${age(s.r.birth)}` : ''}${s.breedMis ? ` · другой породы маток: ${s.breedMis}` : ''}</div></span>
+      <span class="side">${i === 0 ? '<span class="pill ok">лучший</span>' : ''}</span></button>`).join('')}</div>`;
+  h += `<div class="panel"><div class="kv"><span class="eyebrow">Кого к кому — без близкого родства</span><label class="muted" style="display:flex;align-items:center;gap:6px">маток на 1 производителя <input id="g-cap" type="number" min="1" inputmode="numeric" value="${cap}" style="width:64px;padding:4px 8px;min-height:0;background:var(--sunk);border:1px solid var(--line);border-radius:8px"></label></div>${Object.entries(assign).sort((a, b) => rank[a[0]] - rank[b[0]]).map(([rid, l]) => `<div class="kv total"><span>${esc(animalLabel(byId(rid)))}</span><strong>${heads(l.length)}</strong></div>
+      <div class="sub" style="white-space:normal">№ ${l.map(e => esc(e.tag) + (F[rid][e.id] > 0 ? '*' : '')).join(', ')}</div><div class="actions"><button class="btn small" data-mate="${rid}" data-ewes="${l.map(e => e.id).join(',')}">Записать случку с ним</button></div>`).join('')}
+      <p class="muted" style="margin:0">* — дальнее родство (меньше 12,5%), допустимо. Близкое — от 12,5%: отец, сын, брат, сводные, дед.</p></div>`;
+  if(cant.length) h += `<div class="banner">Для ${heads(cant.length)} нет производителя без близкого родства: № ${cant.map(e => esc(e.tag)).join(', ')}. Нужен производитель со стороны.</div>`;
+  const pairs = []; stats.forEach(s => ewes.forEach(e => { if(F[s.r.id][e.id] >= 0.125) pairs.push([s.r, e, F[s.r.id][e.id]]); }));
+  if(pairs.length) h += `<details class="panel"><summary class="eyebrow">Нельзя спаривать — близкое родство: ${pairs.length}</summary>${pairs.slice(0, 200).map(([r, e, f]) => `<div class="kv"><span>${esc(animalLabel(r))} × №${esc(e.tag)}</span><strong>${esc(relationName(r.id, e.id))} · ${Math.round(f * 1000) / 10}%</strong></div>`).join('')}</details>`;
+  h += `<p class="muted" style="margin:0">Родство считается по записанным матерям и отцам до 5 поколений (коэффициент инбридинга потомка по Райту). Продуктивность дочерей — средний надой за 30 дней по записям «по каждой голове».</p>`;
+  return h;
+}
+
 /* ----- Карточка животного ----- */
 function lastBirth(id){
   const b = S.events.filter(e => e.type==='birth' && (e.animalIds||[]).includes(id)).sort((a,b) => b.date.localeCompare(a.date));
@@ -1596,7 +1890,7 @@ function animalCard(id){
     <div style="display:flex;align-items:center;gap:14px"><span class="tag big">${esc(a.tag)}</span>
       <div style="min-width:0"><div class="title-lg">${esc(animalTitle(a))} ${sexIcon(a.sex)}</div>
       <div class="muted">${a.status==='active' ? `<span class="pill ok">В стаде</span>` : `<span class="pill">${STATUS[a.status]}${a.outDate?' · '+fmtD(a.outDate):''}</span>`}</div></div></div>
-    <div class="evbtns">${a.status==='active' ? `${a.sex==='f' ? `<button class="btn ${planItems().some(i => i.kind==='birth' && i.animal.id===id) ? 'primary' : ''}" data-cev="birth">Окот</button>` : ''}<button class="btn" data-cev="ill">Лечение</button><button class="btn" data-cev="vac">Вакцинация</button><button class="btn" data-cev="treat">Дегельминтизация</button><button class="btn" data-cev="vit">Витаминизация</button><button class="btn" data-cev="">Другое…</button>` : ''}<button class="btn" id="edit">Изменить</button></div>
+    <div class="evbtns">${isFeeder() ? '' : a.status==='active' ? `${a.sex==='f' ? `<button class="btn ${planItems().some(i => i.kind==='birth' && i.animal.id===id) ? 'primary' : ''}" data-cev="birth">Окот</button>` : ''}<button class="btn" data-cev="ill">Лечение</button><button class="btn" data-cev="vac">Вакцинация</button><button class="btn" data-cev="treat">Дегельминтизация</button><button class="btn" data-cev="vit">Витаминизация</button><button class="btn" data-cev="">Другое…</button>` : ''}${isFeeder() ? '' : '<button class="btn" id="edit">Изменить</button>'}</div>
     ${(() => { const cs = activeCourses().filter(c => c.animals.includes(id)); return cs.length ? `<div class="panel"><div class="eyebrow">Сейчас</div>${cs.map(c => `<button class="row" data-course="${c.e.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(c.sc.name)}</div><div class="sub">${SCHEME_KIND[c.sc.kind]} · день ${Math.min(c.dayNow, c.check || c.last)} из ${c.check || c.last}${c.pending.length ? ' · сегодня: ' + esc(c.pending.at(-1).steps.map(stepShort).join(' + ')) : c.needResult ? ' · пора оценить результат' : ''}</div></span><span class="side">›</span></button>`).join('')}</div>` : ''; })()}
     <dl class="facts">
       <div><dt>Загон</dt><dd>${a.pen && PEN[a.pen] ? `<button class="link" data-pen-go="${a.pen}">${esc(penLong(a.pen))}</button>${a.since ? `<span class="muted" style="display:block">с ${fmtD(a.since)}</span>` : ''}` : '—'}</dd></div>
@@ -1624,7 +1918,7 @@ function animalCard(id){
     s.querySelectorAll('[data-ev]').forEach(b => b.onclick = () => { const e = S.events.find(x => x.id===b.dataset.ev); if(!e) return; if(e.course) courseSheet(e.course); else if(e.scheme) courseSheet(e.id); else eventForm(e); });
     s.querySelectorAll('[data-course]').forEach(b => b.onclick = () => courseSheet(b.dataset.course));
     s.querySelectorAll('[data-cev]').forEach(b => b.onclick = () => eventForm({animalIds:[id], type: b.dataset.cev || 'weight'}));
-    s.querySelector('#edit').onclick = () => animalForm(a);
+    const ed = s.querySelector('#edit'); if(ed) ed.onclick = () => animalForm(a);
   }, 'card:'+id);
 }
 function evRow(e, aid){
@@ -1633,6 +1927,7 @@ function evRow(e, aid){
     return `<button class="ev" data-ev="${e.id}"><span class="d">${fmtD(e.date)}</span><span><div class="t">Процедура</div><div class="s">${esc(bits.join(' · '))}</div>${byLine(e.byEmail, 'записал(а)') ? `<span class="by">${esc(byLine(e.byEmail, 'записал(а)'))}</span>` : ''}</span></button>`; }
   if(e.type==='result'){ const o = aid ? e.outcomes?.[aid] : null; bits.push(e.schemeName || ''); if(o) bits.push(RESULT[o.r] + (o.scheme ? ': ' + (schemeById(o.scheme)?.name || '') : '')); else bits.push(`${heads((e.animalIds||[]).length)}`); if(e.note) bits.push(e.note);
     return `<button class="ev" data-ev="${e.id}"><span class="d">${fmtD(e.date)}</span><span><div class="t">Результат лечения</div><div class="s">${esc(bits.filter(Boolean).join(' · '))}</div>${byLine(e.byEmail, 'записал(а)') ? `<span class="by">${esc(byLine(e.byEmail, 'записал(а)'))}</span>` : ''}</span></button>`; }
+  if(e.type==='task' && e.title) bits.push(e.title);
   if(e.scheme){ bits.push(`по схеме «${e.scheme.name}»`); (e.scheme.steps||[]).forEach(st => bits.push(stepText(st))); }
   if(e.drug && !e.scheme) bits.push(e.drug);
   if(e.dose) bits.push(e.dose);
@@ -1868,11 +2163,12 @@ function penSheet(pid){
   const body = `
     ${isPen ? `${fld('p-label','Назначение загона',`<input id="p-label" value="${esc(penLabel(pid))}" placeholder="напр. Дойные 2-разовые" autocomplete="off">`)}
 ` : ''}
-    <div class="kv"><span class="eyebrow">Животные · ${list.length}</span>${list.length ? `<button class="link" id="pall">Отметить всех</button>` : ''}</div>
-    ${list.length ? `<div class="list scroll">${list.map(a => `<label class="row pickrow"><input type="checkbox" name="pm" value="${a.id}"><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'} · ${esc(age(a.birth)||SPECIES[a.species])}</span></label>`).join('')}</div>
+    <div class="kv"><span class="eyebrow">Животные · ${list.length}</span>${list.length && !isFeeder() ? `<button class="link" id="pall">Отметить всех</button>` : ''}</div>
+    ${list.length && isFeeder() ? `<div class="list scroll">${list.map(a => `<button class="row pickrow" data-go2="${a.id}" style="grid-template-columns:auto 1fr"><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'} · ${esc(groupName(a.species, groupOf(a)))}</span></button>`).join('')}</div>` : ''}
+    ${list.length && !isFeeder() ? `<div class="list scroll">${list.map(a => `<label class="row pickrow"><input type="checkbox" name="pm" value="${a.id}"><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'} · ${esc(age(a.birth)||SPECIES[a.species])}</span></label>`).join('')}</div>
       <div class="movebar">${fld('p-to','Переместить отмеченных в',`<select id="p-to">${penOptions('', '— выберите загон —')}</select>`)}<button class="btn primary" id="pmove" disabled>Переместить</button></div>`
-      : `<div class="empty"><p>${isPen ? 'В загоне никого нет.' : 'Все животные распределены по загонам.'}</p></div>`}
-    ${isPen ? `<div class="actions"><button class="btn" id="padd">Добавить животное в этот загон</button></div>` : ''}`;
+      : list.length ? '' : `<div class="empty"><p>${isPen ? 'В загоне никого нет.' : 'Все животные распределены по загонам.'}</p></div>`}
+    ${isPen && !isFeeder() ? `<div class="actions"><button class="btn" id="padd">Добавить животное в этот загон</button></div>` : ''}`;
   openSheet(isPen ? penLong(pid) : 'Без загона', body, s => {
     const rs = s.querySelector('#p-ration');
     if(rs) rs.onchange = () => { store.merge('pens', pid, {ration: rs.value || null}); if(rs.value) ensureFeedStart(); toast(rs.value ? 'Рацион назначен' : 'Рацион снят'); setTimeout(() => penSheet(pid), 150); };
@@ -1895,6 +2191,7 @@ function penSheet(pid){
       setTimeout(() => penSheet(pid), 150);
     };
     const pa = s.querySelector('#padd'); if(pa) pa.onclick = () => animalForm(null, {pen:pid});
+    s.querySelectorAll('[data-go2]').forEach(b => b.onclick = () => animalCard(b.dataset.go2));
   }, 'pen:'+pid);
 }
 

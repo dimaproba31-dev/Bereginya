@@ -1,12 +1,53 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Читать и записывать могут только вошедшие пользователи.
-    // Новых пользователей добавляет владелец в разделе Authentication.
-    match /{collection}/{docId} {
-      allow read, write: if request.auth != null
-        && collection in ['animals', 'events', 'finance', 'items', 'moves', 'rations',
-                           'pens', 'feedauto', 'milk', 'milkout', 'settings'];
+
+    // Почты администраторов. Видны только в консоли Firebase, работникам — нет.
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email.lower() in ['zem4601@mail.ru', 'surikat1998@gmail.com'];
+    }
+    function signedIn() { return request.auth != null; }
+    function onlyChanged(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+    // Роль пользователя из «Ещё → Пользователи и имена» (settings/people → roles). По умолчанию — сотрудник.
+    function role() {
+      let p = /databases/$(database)/documents/settings/people;
+      return exists(p) ? get(p).data.get('roles', {}).get(request.auth.token.email.lower(), 'worker') : 'worker';
+    }
+    function isFeeder() { return signedIn() && !isAdmin() && role() == 'feeder'; }
+    function isWorker() { return signedIn() && !isAdmin() && role() != 'feeder'; }
+    // Кормач: только приход и расход по позициям склада «Корма»
+    function feedMove() {
+      return get(/databases/$(database)/documents/items/$(request.resource.data.item)).data.cat == 'feed';
+    }
+
+    // Журнал изменений: пишет каждый (только от своего имени), читает только администратор
+    match /log/{entry} {
+      allow read: if isAdmin();
+      allow create: if signedIn() && request.resource.data.byEmail == request.auth.token.email;
+    }
+
+    match /{col}/{docId} {
+      allow read: if signedIn() && col in ['animals', 'events', 'finance', 'items', 'moves', 'rations',
+                                           'pens', 'feedauto', 'milk', 'milkout', 'settings'];
+
+      // Удалять может только администратор
+      allow delete: if isAdmin();
+
+      // Новые записи: администратор — везде; сотрудник — в рабочих разделах; кормач — только склад кормов
+      allow create: if isAdmin()
+        || (isWorker() && col in ['animals', 'events', 'milk', 'milkout', 'moves', 'finance', 'feedauto'])
+        || (isFeeder() && col == 'moves' && feedMove());
+
+      // Изменения: администратор — всё; сотрудник — надои, перевод по загонам, отметка «Сделано»; кормач — ничего
+      allow update: if isAdmin()
+        || (isWorker() && (
+             col == 'milk'
+          || (col == 'animals' && onlyChanged(['pen', 'since', 'updated', 'updatedBy', 'updatedByEmail']))
+          || (col == 'events' && onlyChanged(['doneNext', 'updated', 'updatedBy', 'updatedByEmail']))
+        ));
     }
   }
 }
