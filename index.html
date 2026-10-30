@@ -411,8 +411,8 @@ nav.tabs .desk,.sideart{display:none}
 .dash{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
 .dl,.dr,.duo{display:contents}
 .picked{display:flex;flex-wrap:wrap;gap:6px}
-body.feeder nav.tabs [data-tab="milk"],body.feeder nav.tabs [data-tab="events"],body.feeder nav.tabs [data-tab="vet"],body.feeder nav.tabs [data-tab="stats"]{display:none!important}
-body.feeder nav.tabs .wrap{grid-template-columns:repeat(4,1fr)}
+body:not(.cm-vet) .m-vet,body:not(.cm-feed) .m-feed,body:not(.cm-fuel) .m-fuel,body:not(.ce-vet) .e-vet{display:none!important}
+.rolesel{min-width:0}
 .pill.plan{background:rgba(140,91,230,.18);color:#C3A6FF}
 .ygrid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:start}
 @media (min-width:700px){.ygrid{grid-template-columns:repeat(2,minmax(0,1fr))}}

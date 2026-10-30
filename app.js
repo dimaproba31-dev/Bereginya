@@ -16,6 +16,7 @@ const PEN = Object.fromEntries(PENS.map(p => [p.id, p]));
 const PEN_ORDER = Object.fromEntries(PENS.map((p, i) => [p.id, i]));
 const penShort = id => PEN[id] ? `${PEN[id].barn.name}, загон ${PEN[id].n}` : '';
 const penLong = id => PEN[id] ? `${PEN[id].barn.name}, загон ${PEN[id].n}` : 'Без загона';
+const penRationNo = id => String(S.pens.find(p => p.id===id)?.rationNo || '');
 const penLabel = id => (S.pens.find(p => p.id===id)?.label || '').trim();
 
 /* ===== Справочники ===== */
@@ -153,6 +154,7 @@ function firebaseBackend(fs, db){
     newId(col){ return fs.doc(fs.collection(db, col)).id; },
     write(col, id, data, merge){ return merge ? fs.setDoc(fs.doc(db, col, id), conv(data), {merge:true}) : fs.setDoc(fs.doc(db, col, id), data); },
     remove(col, id){ return fs.deleteDoc(fs.doc(db, col, id)); },
+    watchDoc(col, id, next, fail){ return fs.onSnapshot(fs.doc(db, col, id), snap => next(snap.exists() ? {id:snap.id, ...snap.data()} : null), fail); },
     recent(col, n, next, fail){
       return fs.onSnapshot(fs.query(fs.collection(db, col), fs.orderBy('at', 'desc'), fs.limit(n)),
         snap => next(snap.docs.map(d => ({id:d.id, ...d.data()}))), fail);
@@ -284,16 +286,17 @@ async function boot(){
     fb = {db, auth, fs, au};
     au.onAuthStateChanged(auth, user => {
       if(!user){ detach(); S.uid=null; S.email=null; closeSheet(); setMode('login'); return; }
-      S.uid = user.uid; S.email = user.email; S.admin = false; document.body.classList.add('worker');
-      isAdminEmail(user.email).then(ok => { S.admin = ok; document.body.classList.toggle('worker', !ok); render(); scheduleFeed(); scheduleGroups(); });
-      attach(firebaseBackend(fs, db));
+      S.uid = user.uid; S.email = user.email; S.owner = false; S.userRole = ''; S.admin = false; document.body.classList.add('worker');
+      isAdminEmail(user.email).then(ok => { S.owner = ok; applyRole(); render(); scheduleFeed(); scheduleGroups(); });
+      const be = firebaseBackend(fs, db); attach(be);
+      S.roleUnsub = be.watchDoc('users', String(user.email || '').toLowerCase(), d => { S.userRole = d?.role || ''; applyRole(); render(); }, () => {});
     });
   }catch(e){
     // нет интернета при самом первом запуске — библиотеки ещё не сохранены на телефоне
     setMode('nolib');
   }
 }
-function detach(){ unsubs.forEach(u => u()); unsubs = []; COLS.forEach(c => S[c] = []); }
+function detach(){ unsubs.forEach(u => u()); unsubs = []; COLS.forEach(c => S[c] = []); [S.roleUnsub, S.usersUnsub].forEach(u => { try{ u && u(); }catch(_){} }); S.roleUnsub = S.usersUnsub = null; S.users = []; }
 function attach(be){
   detach(); S.be = be; S.loaded = {}; S.pending = {};
   for(const c of COLS){
@@ -305,7 +308,7 @@ function attach(be){
   S.mode = 'live'; updateSync(); render();
 }
 function startLocal(demo){
-  S.local = true; S.demo = demo; S.uid = null; S.email = null; S.admin = true; document.body.classList.remove('worker');
+  S.local = true; S.demo = demo; S.uid = null; S.email = null; S.admin = true; document.body.classList.remove('worker'); S.demoRole = S.demoRole || 'admin';
   const be = localBackend(demo ? 'otara-demo-v1' : 'otara-local-v1');
   let cleared = false; try{ cleared = localStorage.getItem('otara-demo-cleared')==='1'; }catch(_){}
   if(demo && be.isEmpty() && !cleared) seedDemo(be);
@@ -473,22 +476,22 @@ function render(){
   const plan = planItems();
   const urgent = plan.filter(i => daysBetween(today(), i.date) <= 7).length;
   const b = $('#moreBadge'); b.hidden = true;
-  const feeder = isFeeder(); document.body.classList.toggle('feeder', feeder);
-  if(feeder){ if(!FEEDER_TABS.has(S.tab)) S.tab = 'home'; S.stockCat = 'feed'; }
+  applyRole(); const role = roleOf();
+  { let n = 0; document.querySelectorAll('nav.tabs button').forEach(x => { x.hidden = !canTab(x.dataset.tab); if(!x.hidden && !x.classList.contains('desk')) n++; }); $('nav.tabs .wrap').style.gridTemplateColumns = `repeat(${n},1fr)`; }
   const ownBtn = document.querySelector(`nav.tabs button[data-tab="${S.tab}"]`), navKey = ownBtn && ownBtn.offsetParent ? S.tab : NAV_OF[S.tab];
   document.querySelectorAll('nav.tabs button').forEach(x => x.dataset.tab===navKey ? x.setAttribute('aria-current','page') : x.removeAttribute('aria-current'));
   v.classList.toggle('wide', S.tab==='home');
   { const n = todayCount(), eb = $('#evBadge'); if(eb){ eb.hidden = !n; eb.textContent = n; } }
-  { const w = $('#who'); if(w){ w.hidden = !S.email; w.innerHTML = S.email ? `<b>${esc(whoName(S.email))}</b>${S.admin ? 'Администратор' : 'Сотрудник'}` : ''; } }
+  { const w = $('#who'); if(w){ w.hidden = !S.email; w.innerHTML = S.email ? `<b>${esc(whoName(S.email))}</b>${ROLE_DEF[role]?.l || ''}` : ''; } }
   updateClock();
-  $('#fab').hidden = !['herd','milk','stock','plan','money'].includes(S.tab) || (S.tab==='herd' && S.herdMode==='pens') || (feeder && S.tab !== 'stock');
+  $('#fab').hidden = !({herd:canCreate('herd') && S.herdMode!=='pens', milk:canCreate('milk'), stock: S.stockCat==='tech' ? canManage('fuel') : canCreate(catDomain(S.stockCat)), plan:canCreate('herd') || canCreate('vet'), money:canCreate('fin')})[S.tab];
   let html = '';
   if(S.demo) html += `<div class="banner">Демо-режим: всё хранится только в этом браузере.${S.animals.some(a => a.demo) ? ` Сейчас открыт пример хозяйства. <button class="link adm" data-act="clear-demo">Очистить пример</button>` : ''}</div>`;
-  html += ({yplan:yplanView, genetics:genView, daily:dailyView, log:logView, people:peopleView, feedsheet:feedSheetView, vet:vetView, events:eventsView, home: feeder ? feederHome : homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
+  html += ({yplan:yplanView, genetics:genView, daily:dailyView, log:logView, people:peopleView, feedsheet:feedSheetView, vet:vetView, events:eventsView, home: role==='feeder' ? feederHome : role==='mechanic' ? mechHome : homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
   const focus = document.activeElement?.id, pos = document.activeElement?.selectionStart;
   v.innerHTML = html;
   bindView();
-  if(focus==='q'){ const q = $('#q'); q.focus(); try{ q.setSelectionRange(pos,pos); }catch(_){} }
+  if(focus==='q'){ const q = $('#q'); if(q){ q.focus(); try{ q.setSelectionRange(pos,pos); }catch(_){} } }
 }
 const loading = (...c) => !ready('animals', ...c);
 const backTo = title => `<button class="back" data-tab-go="more">‹ Ещё</button><h2 class="page">${title}</h2>`;
@@ -538,7 +541,7 @@ function bindGate(){
 let logUnsub = null, logDocs = null, logWho = '';
 function logView(){
   let h = backTo('Журнал изменений');
-  if(!S.admin) return h + `<div class="empty"><p>Раздел недоступен.</p></div>`;
+  if(!seeWho()) return h + `<div class="empty"><p>Раздел недоступен.</p></div>`;
   if(!logUnsub && S.be?.recent){ logUnsub = S.be.recent('log', 600, docs => { logDocs = docs; if(S.tab==='log') render(); }, () => { logDocs = []; if(S.tab==='log') render(); }); }
   if(!logDocs) return h + `<div class="empty"><p>Загружаем…</p></div>`;
   const people = [...new Set(logDocs.map(x => x.byEmail).filter(Boolean))].sort();
@@ -585,6 +588,43 @@ function feederHome(){
     <div class="panel"><div class="kv"><span class="eyebrow">Остатки по складу</span><button class="link" data-nav="stock">Подробно</button></div>
       ${feeds.length ? feeds.map(i => `<div class="kv"><span>${esc(i.name)}</span><strong class="${(bal[i.id] || 0) < 0 || (i.min > 0 && (bal[i.id] || 0) < i.min) ? 'money minus' : ''}">${String(round(bal[i.id] || 0, 2)).replace('.', ',')} ${esc(i.unit)}</strong></div>`).join('') : '<p class="muted" style="margin:0">Корма не заведены.</p>'}</div>
     <div class="panel"><div class="eyebrow">Сегодня записано</div>${todayOps.length ? `<div class="list">${todayOps.map(moveRow).join('')}</div>` : '<p class="muted" style="margin:0">Сегодня ещё ничего не записано.</p>'}</div>`;
+}
+
+function quickCard(milkDay){
+  const big = [
+    canCreate('herd') && `<button class="qa g" data-act="add-animal">${ico('plus')}Добавить животное</button>`,
+    (canCreate('herd') || canCreate('vet')) && `<button class="qa b" data-vnew="${canCreate('herd') ? 'other' : 'ill'}">${hico('cal')}Записать событие</button>`,
+    canCreate('milk') && `<button class="qa t" data-act="milkquick">${ico('milk')}Записать надой${milkDay ? ` <small>сегодня ${num(milkDay)} л</small>` : ''}</button>`,
+    canTab('daily') && `<button class="qa p" data-nav="daily">${hico('report')}Отчёт за текущий день</button>`
+  ].filter(Boolean).join('');
+  const mini = [
+    canCreate('vet') && `<button data-vnew="ill">${hico('syringe')}Лечение</button><button data-vnew="vac">${hico('syringe')}Вакцинация</button><button data-vnew="vit">${hico('syringe')}Витамини&shy;зация</button><button data-vnew="treat">${hico('syringe')}Дегельмин&shy;тизация</button>`,
+    canCreate('birth') && `<button data-act="q-birth">${ico('birth')}Окот</button>`,
+    canCreate('milk') && `<button data-act="milkout">${ico('truck')}Отгрузка молока</button>`,
+    canCreate('feed') && `<button data-act="q-feed">${ico('feed')}Приход корма</button>`,
+    canCreate('fuel') && `<button data-act="q-fuel">${ico('fuel')}Заправка</button>`,
+    canCreate('herd') && `<button data-nav="herd" data-hm2="pens">${ico('move')}По загонам</button>`,
+    canTab('feedsheet') && `<button data-tab-go="feedsheet">${hico('report')}Табель</button>`,
+    `<button data-act="excel">${hico('report')}Выгрузка в Excel</button>`,
+    canTab('yplan') && `<button data-tab-go="yplan">${hico('cal')}Годовой план</button>`,
+    canTab('genetics') && `<button data-tab-go="genetics">${hico('herd')}Генетика</button>`
+  ].filter(Boolean).join('');
+  return `<div class="card quickcard"><div class="card-h"><h3>${isViewer() ? 'Просмотр и выгрузка' : 'Быстрые действия'}</h3></div>${big}<div class="qmini">${mini}</div></div>`;
+}
+function mechHome(){
+  if(loading('items', 'moves')) return `<div class="empty"><p>Загружаем…</p></div>`;
+  const t = today(), bal = stockBalance(), fuels = itemsOf('fuel'), vs = vehicles();
+  const todayOps = S.moves.filter(m => m.date === t && itemById(m.item)?.cat === 'fuel').sort((a, b) => (b.created || 0) - (a.created || 0));
+  const dateLabel = new Date().toLocaleDateString('ru-RU', {weekday:'long', day:'numeric', month:'long'});
+  return `<div class="hello"><h1>${dateLabel[0].toUpperCase() + dateLabel.slice(1)}</h1></div>
+    <div class="card quickcard"><div class="card-h"><h3>Техника и ГСМ</h3></div>
+      <button class="qa b" data-fuelmv="out">${ico('fuel')}Заправка техники</button>
+      <button class="qa g" data-fuelmv="in">${ico('plus')}Приход топлива</button>
+      <button class="qa t" data-stockgo="tech">${ico('truck')}Склад техники · ${vs.length}</button>
+      <button class="qa p" data-act="excel">${hico('report')}Выгрузка в Excel</button></div>
+    <div class="panel"><div class="kv"><span class="eyebrow">Остатки ГСМ</span><button class="link" data-stockgo="fuel">Подробно</button></div>
+      ${fuels.length ? fuels.map(i => `<div class="kv"><span>${esc(i.name)}</span><strong class="${(bal[i.id] || 0) < 0 ? 'money minus' : ''}">${String(round(bal[i.id] || 0, 2)).replace('.', ',')} ${esc(i.unit)}</strong></div>`).join('') : '<p class="muted" style="margin:0">Топливо не заведено.</p>'}</div>
+    <div class="panel"><div class="eyebrow">Сегодня заправлено и принято</div>${todayOps.length ? `<div class="list">${todayOps.map(moveRow).join('')}</div>` : '<p class="muted" style="margin:0">Сегодня ещё ничего не записано.</p>'}</div>`;
 }
 
 /* ===== Главная (панель) ===== */
@@ -685,31 +725,16 @@ function homeView(){
     ${nToday ? `<button class="banner as-btn todayb" data-nav="events" data-aghz2="today">${hico('cal')}<span>События сегодня: <b>${nToday}</b> — что сделать</span><span>›</span></button>` : ''}
     <div class="duo"><div class="card chartcard"><div class="card-h"><h3>Динамика поголовья</h3><div class="legend"><span><i style="background:var(--sheep)"></i>Овцы</span><span><i style="background:var(--goat)"></i>Козы</span><span><i style="background:var(--young)"></i>Ягнята/Козлята</span></div></div>
       <div class="chips">${[[8, '8 дней'], [30, 'Месяц'], [90, '3 месяца']].map(([d, l]) => `<button class="chip" data-chd="${d}" aria-pressed="${hz === d}">${l}</button>`).join('')}</div>${herdChart(hz)}</div>
-    <button class="card healthcard" data-tab-go="vet"><div class="card-h"><h3>Состояние здоровья</h3></div>
+    <button class="card healthcard" ${canTab('vet') ? 'data-tab-go="vet"' : ''}><div class="card-h"><h3>Состояние здоровья</h3></div>
       <div class="hbody"><div class="ringw">${ring(hi.pct)}<div class="ringt">${hico('heart')}<b>${hi.pct}%</b><small>в норме</small></div></div>
       <div class="hlist"><span><i style="background:var(--good)"></i>Здоровые<b>${hi.ok}</b></span><span><i style="background:var(--warn)"></i>На лечении<b>${hi.treat}</b></span><span><i style="background:var(--bad)"></i>Под наблюдением<b>${hi.watch}</b></span></div></div></button></div>
     <div class="card recentcard"><div class="card-h"><h3>Последние записи</h3><button class="link" data-nav="events" data-aghz2="week">Все события ›</button></div>${recentRows()}</div>
     </div><div class="dr">
     ${calendarBox()}
-    <div class="card quickcard"><div class="card-h"><h3>Быстрые действия</h3></div>
-      <button class="qa g" data-act="add-animal">${ico('plus')}Добавить животное</button>
-      <button class="qa b" data-vnew="other">${hico('cal')}Записать событие</button>
-      <button class="qa t" data-act="milkquick">${ico('milk')}Записать надой${milkDay ? ` <small>сегодня ${num(milkDay)} л</small>` : ''}</button>
-      <button class="qa p" data-nav="daily">${hico('report')}Отчёт за текущий день</button>
-      <div class="qmini">
-        <button data-vnew="ill">${hico('syringe')}Лечение</button><button data-vnew="vac">${hico('syringe')}Вакцинация</button>
-        <button data-vnew="vit">${hico('syringe')}Витамини&shy;зация</button><button data-vnew="treat">${hico('syringe')}Дегельмин&shy;тизация</button>
-        <button data-act="q-birth">${ico('birth')}Окот</button><button data-act="milkout">${ico('truck')}Отгрузка молока</button>
-        <button data-act="q-feed">${ico('feed')}Приход корма</button><button data-act="q-fuel">${ico('fuel')}Заправка</button>
-        <button data-nav="herd" data-hm2="pens">${ico('move')}По загонам</button><button data-tab-go="feedsheet">${hico('report')}Табель</button><button data-act="excel">${hico('report')}Выгрузка в Excel</button><button data-tab-go="yplan">${hico('cal')}Годовой план</button><button data-tab-go="genetics">${hico('herd')}Генетика</button><button data-tab-go="stats">${hico('report')}Сводка за год</button>
-      </div></div>
+    ${quickCard(milkDay)}
     </div>
     <div class="secs">
-      <button class="sec-c" data-nav="herd"><span class="kico">${hico('sheep')}</span><span><b>Поголовье</b><small>Полный учёт и контроль всех животных</small></span></button>
-      <button class="sec-c" data-tab-go="vet"><span class="kico">${hico('syringe')}</span><span><b>Ветеринария</b><small>Лечение по схемам, вакцинации, обработки</small></span></button>
-      <button class="sec-c" data-nav="milk"><span class="kico">${ico('milk')}</span><span><b>Молоко</b><small>Надои утро/вечер, отгрузки</small></span></button>
-      <button class="sec-c" data-nav="stock"><span class="kico">${ico('feed')}</span><span><b>Склад</b><small>Корма, ГСМ, аптека, техника</small></span></button>
-      <button class="sec-c" data-nav="daily"><span class="kico">${hico('report')}</span><span><b>Отчёты</b><small>Отчёт за день, сводка, Excel</small></span></button>
+      ${[['herd', `<button class="sec-c" data-nav="herd"><span class="kico">${hico('sheep')}</span><span><b>Поголовье</b><small>Полный учёт и контроль всех животных</small></span></button>`], ['vet', `<button class="sec-c" data-tab-go="vet"><span class="kico">${hico('syringe')}</span><span><b>Ветеринария</b><small>Лечение по схемам, вакцинации, обработки</small></span></button>`], ['milk', `<button class="sec-c" data-nav="milk"><span class="kico">${ico('milk')}</span><span><b>Молоко</b><small>Надои утро/вечер, отгрузки</small></span></button>`], ['stock', `<button class="sec-c" data-nav="stock"><span class="kico">${ico('feed')}</span><span><b>Склад</b><small>Корма, ГСМ, аптека, техника</small></span></button>`], ['daily', `<button class="sec-c" data-nav="daily"><span class="kico">${hico('report')}</span><span><b>Отчёты</b><small>Отчёт за день, сводка, Excel</small></span></button>`]].filter(([t]) => canTab(t)).map(x => x[1]).join('')}
     </div>
   </div>`;
 }
@@ -752,7 +777,7 @@ function herdView(){
   if(!listMode){
     const extra = ['nogroup','nopen','gone'].map(k => { const n = all.filter(FILTERS[k][1]).length; return n ? `<button class="gbtn soft" data-f="${k}"><span>${FILTERS[k][0]}</span><b>${n}</b></button>` : ''; }).join('');
     const vt = vetTasks().length, vc = activeCourses().length;
-    return search + `${isFeeder() ? '' : `<button class="banner as-btn ${vt ? '' : 'soft'}" data-tab-go="vet">Ветеринария${vt ? `: сегодня ${vt} ${plural(vt, 'процедура', 'процедуры', 'процедур')}` : vc ? `: идёт курсов ${vc}` : ' — лечение, вакцинация, схемы'} ›</button>`}<div class="hero"><div><div class="hero-l">Всего поголовье</div><div class="bignum">${act.length}</div></div><div class="hero-r"><span><i style="background:var(--sheep)"></i>Овцы <b>${nSheep}</b></span><span><i style="background:var(--goat)"></i>Козы <b>${nGoat}</b></span></div></div>
+    return search + `${!canTab('vet') ? '' : `<button class="banner as-btn ${vt ? '' : 'soft'}" data-tab-go="vet">Ветеринария${vt ? `: сегодня ${vt} ${plural(vt, 'процедура', 'процедуры', 'процедур')}` : vc ? `: идёт курсов ${vc}` : ' — лечение, вакцинация, схемы'} ›</button>`}<div class="hero"><div><div class="hero-l">Всего поголовье</div><div class="bignum">${act.length}</div></div><div class="hero-r"><span><i style="background:var(--sheep)"></i>Овцы <b>${nSheep}</b></span><span><i style="background:var(--goat)"></i>Козы <b>${nGoat}</b></span></div></div>
       ${block('sheep')}${block('goat')}
       ${extra ? `<div class="gblock"><div class="gtitle"><span>Требуют внимания</span></div><div class="ggrid">${extra}</div></div>` : ''}
       <button class="gbtn wide" data-f="active"><span>Весь список животных</span><b>${act.length} ›</b></button>`;
@@ -815,7 +840,7 @@ function pensView(){
       <div class="pens">${pens.map(p => {
         const n = inPen(p.id).length, r = penRation(p.id);
         return `<button class="pen ${n?'':'empty'} ${b.quarantine?'q':''}" data-pen="${p.id}" aria-label="${esc(penLong(p.id))}: ${heads(n)}">
-          <b>${p.n}</b><span>${n ? `${n} гол.` : 'пусто'}</span>${penLabel(p.id) ? `<em>${esc(penLabel(p.id))}</em>` : ''}${r ? `<i>${esc(r.name.replace(/^рацион\s*/i, ''))}</i>` : ''}</button>`;
+          <b>${p.n}</b><span>${n ? `${n} гол.` : 'пусто'}</span>${penLabel(p.id) ? `<em>${esc(penLabel(p.id))}</em>` : ''}${penRationNo(p.id) ? `<i>Р№${esc(penRationNo(p.id))}</i>` : r ? `<i>${esc(r.name.replace(/^рацион\s*/i, ''))}</i>` : ''}</button>`;
       }).join('')}</div></section>`;
   }
   return h;
@@ -877,21 +902,72 @@ function milkChart(end, sp){
 
 /* ----- Склад ----- */
 function stockView(){
-  const cat = isFeeder() ? 'feed' : STOCK[S.stockCat] ? S.stockCat : 'feed';
-  let h = isFeeder() ? '' : `<div class="segb" role="group" aria-label="Раздел склада">${Object.entries(STOCK).map(([k,l]) => `<button data-cat="${k}" aria-pressed="${cat===k}">${l}</button>`).join('')}</div>`;
+  const cats = Object.keys(STOCK).filter(canStock), cat = cats.includes(S.stockCat) ? S.stockCat : (cats[0] || 'feed');
+  let h = cats.length < 2 ? '' : `<div class="segb" role="group" aria-label="Раздел склада">${Object.entries(STOCK).filter(([k]) => cats.includes(k)).map(([k,l]) => `<button data-cat="${k}" aria-pressed="${cat===k}">${l}</button>`).join('')}</div>`;
   if(loading('items','moves')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
   return h + (cat==='tech' ? techView() : stockCatView(cat));
 }
 const itemsOf = cat => S.items.filter(i => i.cat===cat).sort((a,b) => a.name.localeCompare(b.name,'ru'));
 // Имена пользователей: задаёт администратор (settings/people → names: {почта: имя}). Подпись «внёс» видят только администраторы.
 const peopleNames = () => setting('people')?.names || {};
-const peopleRoles = () => setting('people')?.roles || {};
-const ROLES = {worker:'Сотрудник', feeder:'Кормач'};
-const roleOf = () => S.admin ? 'admin' : (S.local || S.demo) ? (S.demoRole || 'admin') : (peopleRoles()[String(S.email || '').toLowerCase()] || 'worker');
+/* ===== Роли ===== */
+// Роль хранится в users/{почта} — этот документ видит только сам пользователь и администратор.
+const ROLE_DEF = {
+  admin:   {l:'Администратор', d:'Всё в программе, журнал «кто что внёс», пользователи и роли'},
+  manager: {l:'Управляющий по эксплуатации', d:'Всё, кроме ветеринарии; видит, кто что внёс; может исправлять'},
+  foreman: {l:'Бригадир', d:'Вносит всё, но не исправляет и не удаляет; не видит, кто что внёс'},
+  vet:     {l:'Ветеринарный врач', d:'Ветаптека, лечение, вакцинация, обработки, схемы, окоты, молоко'},
+  feeder:  {l:'Кормач', d:'Склад кормов, табель и рационы по загонам; стадо — просмотр'},
+  mechanic:{l:'Механизатор', d:'Техника и ГСМ'},
+  viewer:  {l:'Пользователь (просмотр)', d:'Только просмотр и выгрузка в Excel — напр. для бухгалтера'}
+};
+const VET_TYPES = new Set(['ill', 'vac', 'treat', 'vit', 'dose', 'result']);
+const ALL_TABS = ['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'plan', 'money', 'stats', 'feedsheet', 'yplan', 'genetics', 'daily'];
+const ROLE = {
+  admin:   {create:'*', edit:'*', manage:'*', tabs:[...ALL_TABS, 'log', 'people'], stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
+  manager: {create:['herd', 'birth', 'milk', 'feed', 'fuel', 'fin', 'plan'], edit:['herd', 'birth', 'milk', 'feed', 'fuel', 'fin', 'plan'], manage:['herd', 'feed', 'fuel', 'plan'],
+            tabs:[...ALL_TABS.filter(t => t !== 'vet'), 'log'], stock:['feed', 'fuel', 'tech'], xl:['herd', 'births', 'pens', 'feed', 'fuel', 'tech', 'milk', 'milkHeads', 'milkOut', 'finance']},
+  foreman: {create:['herd', 'birth', 'vet', 'milk', 'feed', 'fuel', 'fin', 'plan'], edit:[], manage:[], tabs:ALL_TABS, stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
+  vet:     {create:['vet', 'birth', 'milk', 'plan'], edit:['vet', 'milk'], manage:['vet'], tabs:['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'daily', 'yplan', 'plan'], stock:['vet'],
+            xl:['herd', 'births', 'events', 'milk', 'milkHeads', 'milkOut', 'vet']},
+  feeder:  {create:['feed', 'plan'], edit:['feed'], manage:['feed'], tabs:['home', 'herd', 'pens', 'stock', 'feedsheet', 'more'], stock:['feed'], xl:['feed', 'pens']},
+  mechanic:{create:['fuel', 'plan'], edit:['fuel'], manage:['fuel'], tabs:['home', 'stock', 'more'], stock:['fuel', 'tech'], xl:['fuel', 'tech']},
+  viewer:  {create:[], edit:[], manage:[], tabs:ALL_TABS, stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'}
+};
+const legacyRole = () => ({feeder:'feeder', worker:'foreman'})[(setting('people')?.roles || {})[String(S.email || '').toLowerCase()]] || '';
+function roleOf(){
+  if(S.local || S.demo) return S.demoRole || 'admin';
+  if(S.owner) return 'admin';
+  return ROLE[S.userRole] ? S.userRole : (legacyRole() || 'foreman');
+}
+const R = () => ROLE[roleOf()] || ROLE.viewer;
+const has = (v, d) => v === '*' || (Array.isArray(v) && v.includes(d));
+const canCreate = d => has(R().create, d);
+const canEdit = d => has(R().edit, d);
+const canManage = d => has(R().manage, d);
+const canTab = t => t === 'home' || t === 'more' || has(R().tabs, t);
+const canStock = c => R().stock.includes(c === 'vehicle' ? 'tech' : c);
+const canXl = k => has(R().xl, k);
+const seeWho = () => ['admin', 'manager'].includes(roleOf());
+const isViewer = () => roleOf() === 'viewer';
 const isFeeder = () => roleOf() === 'feeder';
-const FEEDER_TABS = new Set(['home', 'herd', 'pens', 'stock', 'feedsheet', 'more']);
+const isMech = () => roleOf() === 'mechanic';
+const evDomain = t => VET_TYPES.has(t) ? 'vet' : (t === 'birth' || t === 'weight' || t === 'mating') ? 'birth' : t === 'task' ? 'plan' : 'herd';
+const catDomain = c => c === 'vehicle' || c === 'tech' ? 'fuel' : c;
+const roToast = () => toast('Нет прав на это действие.');
+function applyRole(){
+  const r = roleOf();
+  S.admin = r === 'admin';
+  document.body.classList.toggle('worker', !['admin', 'manager'].includes(r));
+  document.body.dataset.role = r;
+  ['vet', 'feed', 'fuel'].forEach(d => { document.body.classList.toggle('cm-' + d, canManage(d)); document.body.classList.toggle('ce-' + d, canEdit(d)); });
+  if(!canTab(S.tab)) S.tab = 'home';
+  if(!canStock(S.stockCat)) S.stockCat = R().stock[0] || 'feed';
+  if(S.admin && S.be && S.be.subscribe && !S.usersUnsub){ S.usersUnsub = S.be.subscribe('users', docs => { S.users = docs; if(S.tab === 'people') scheduleRender(); }, () => {}); }
+}
+
 const whoName = e => { if(!e) return ''; const k = String(e).toLowerCase().trim(); return peopleNames()[k] || String(e).split('@')[0]; };
-const byLine = (e, word='внёс') => S.admin && e ? `${word}: ${whoName(e)}` : '';
+const byLine = (e, word='внёс') => seeWho() && e ? `${word}: ${whoName(e)}` : '';
 function knownEmails(){
   const set = new Set(Object.keys(peopleNames()));
   for(const col of ['moves','milk','milkout','events','animals','finance']) (S[col]||[]).forEach(d => { [d.byEmail, d.updatedByEmail].forEach(x => x && set.add(String(x).toLowerCase())); });
@@ -900,16 +976,22 @@ function knownEmails(){
   return [...set].filter(x => /@/.test(x)).sort((a, b) => whoName(a).localeCompare(whoName(b), 'ru'));
 }
 function peopleView(){
-  let h = backTo('Пользователи');
+  let h = backTo('Пользователи и роли');
   if(!S.admin) return h + `<div class="empty"><p>Раздел недоступен.</p></div>`;
-  const names = peopleNames(), roles = peopleRoles(), list = knownEmails().filter(e => e !== String(S.email || '').toLowerCase());
-  const roleSel = (e, i) => `<select data-role="${esc(e)}" aria-label="Роль">${Object.entries(ROLES).map(([k, l]) => opt(k, l, roles[e] || 'worker')).join('')}</select>`;
-  h += `<p class="muted" style="margin:0">Для каждой почты — имя и роль. Имя видно вам в журнале и в записях («внёс: Иван»). <b>Сотрудник</b> вносит надои, окоты, обработки, склад. <b>Кормач</b> видит только склад кормов (остатки, приход, расход), табель кормления и стадо без изменений. Самих пользователей добавляют в консоли Firebase (Authentication → Users), потом впишите почту здесь.</p>
-    <form id="pplf" novalidate><div class="ppl">${list.map((e, i) => `<div class="field"><label for="ppl-${i}" style="word-break:break-all">${esc(e)}</label>
-      <div class="two"><input id="ppl-${i}" name="${esc(e)}" value="${esc(names[e] || '')}" placeholder="имя, например Иван" autocomplete="off">${roleSel(e, i)}</div></div>`).join('')}</div>
+  const names = peopleNames(), users = Object.fromEntries((S.users || []).map(u => [u.id, u]));
+  const legacy = setting('people')?.roles || {};
+  const me = String(S.email || '').toLowerCase();
+  const list = [...new Set([...knownEmails(), ...Object.keys(users)])].filter(e => e && e !== me).sort((a, b) => whoName(a).localeCompare(whoName(b), 'ru'));
+  const curRole = e => users[e]?.role || ({feeder:'feeder', worker:'foreman'})[legacy[e]] || 'foreman';
+  const roleSel = (attr, cur) => `<select ${attr} class="rolesel" aria-label="Роль">${Object.entries(ROLE_DEF).map(([k, r]) => opt(k, r.l, cur)).join('')}</select>`;
+  h += `<details class="panel"><summary class="eyebrow">Что может каждая роль</summary>${Object.values(ROLE_DEF).map(r => `<div class="kv"><span><b style="color:var(--fg)">${r.l}</b></span></div><p class="muted" style="margin:0 0 6px">${r.d}</p>`).join('')}
+      <p class="muted" style="margin:0">Выгрузка в Excel есть у всех — по своим разделам. Роль видят только сам человек и администраторы.</p></details>
+    <form id="pplf" novalidate><div class="ppl">${list.map((e, i) => `<div class="panel" style="gap:8px"><div class="sub" style="word-break:break-all;white-space:normal">${esc(e)}</div>
+      <div class="two"><input id="ppl-${i}" name="${esc(e)}" value="${esc(names[e] || users[e]?.name || '')}" placeholder="имя, например Иван" autocomplete="off">${roleSel(`data-role="${esc(e)}"`, curRole(e))}</div></div>`).join('')}</div>
     <div class="eyebrow">Новый пользователь</div>
+    <p class="muted" style="margin:0">Сначала создайте его в консоли Firebase (Authentication → Users → Add user), потом впишите ту же почту здесь.</p>
     <div class="two">${fld('ppl-new','Почта',`<input id="ppl-new" type="email" placeholder="ivan@mail.ru" autocomplete="off">`)}${fld('ppl-newn','Имя',`<input id="ppl-newn" placeholder="Иван" autocomplete="off">`)}</div>
-    ${fld('ppl-newr','Роль',`<select id="ppl-newr">${Object.entries(ROLES).map(([k, l]) => opt(k, l, 'worker')).join('')}</select>`)}
+    ${fld('ppl-newr','Роль', roleSel('id="ppl-newr"', 'foreman'))}
     <p class="err" id="pplerr" hidden></p>
     <div class="actions"><button class="btn primary" type="submit">Сохранить</button></div></form>`;
   return h;
@@ -917,19 +999,20 @@ function peopleView(){
 function bindPeople(){
   const f = $('#pplf'); if(!f) return;
   f.onsubmit = ev => {
-    ev.preventDefault(); const out = {...peopleNames()}, roles = {...peopleRoles()};
-    f.querySelectorAll('.ppl input').forEach(i => { const v = i.value.trim(); if(v) out[i.name] = v; else delete out[i.name]; });
-    f.querySelectorAll('[data-role]').forEach(sl => { if(sl.value === 'worker') delete roles[sl.dataset.role]; else roles[sl.dataset.role] = sl.value; });
+    ev.preventDefault(); const names = {...peopleNames()}, users = Object.fromEntries((S.users || []).map(u => [u.id, u]));
+    const setRole = (e, role, name) => { const u = users[e]; if(!u || u.role !== role || (name && u.name !== name)) store.set('users', e, {role, name: name || u?.name || ''}); };
+    f.querySelectorAll('.ppl input').forEach(i => { const v = i.value.trim(); if(v) names[i.name] = v; else delete names[i.name]; });
+    f.querySelectorAll('[data-role]').forEach(sl => setRole(sl.dataset.role, sl.value, names[sl.dataset.role]));
     const ne = f.querySelector('#ppl-new').value.trim().toLowerCase(), nn = f.querySelector('#ppl-newn').value.trim(), nr = f.querySelector('#ppl-newr').value;
-    if(ne || nn){ if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ne) || !nn){ const e = f.querySelector('#pplerr'); e.hidden = false; e.textContent = 'Для нового пользователя укажите и почту, и имя.'; return; } out[ne] = nn; if(nr !== 'worker') roles[ne] = nr; }
-    store.set('settings', 'people', {names: out, roles}); toast('Сохранено'); setTimeout(render, 200);
+    if(ne || nn){ if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ne) || !nn){ const e = f.querySelector('#pplerr'); e.hidden = false; e.textContent = 'Для нового пользователя укажите и почту, и имя.'; return; } names[ne] = nn; setRole(ne, nr, nn); }
+    store.set('settings', 'people', {names}); toast('Сохранено'); setTimeout(render, 300);
   };
 }
 const monthTitle = ym => { const s = parse(ym + '-01').toLocaleDateString('ru-RU', {month:'long', year:'numeric'}).replace(/\s*г\.?$/, ''); return s[0].toUpperCase() + s.slice(1); };
 function stockCatView(cat){
   const items = itemsOf(cat), bal = stockBalance(), sub = S.stockSub || 'bal';
-  let h = `<div class="sechead"><h2>${STOCK_FULL[cat]}</h2><button class="btn small adm" data-act="add-item">+ ${ITEM_WORD[cat].add}</button></div>`;
-  if(!items.length) return h + `<div class="empty"><p>${EMPTY_TEXT[cat]}</p><div class="actions">${DEFAULT_ITEMS[cat]?.length ? `<button class="btn primary adm" data-act="seed-items">Добавить типовой список</button>` : ''}<button class="btn adm ${DEFAULT_ITEMS[cat]?.length ? '' : 'primary'}" data-act="add-item">+ ${ITEM_WORD[cat].add}</button></div></div>`;
+  let h = `<div class="sechead"><h2>${STOCK_FULL[cat]}</h2>${canManage(catDomain(cat)) ? `<button class="btn small" data-act="add-item">+ ${ITEM_WORD[cat].add}</button>` : ''}</div>`;
+  if(!items.length) return h + `<div class="empty"><p>${EMPTY_TEXT[cat]}</p><div class="actions">${!canManage(catDomain(cat)) ? '' : `${DEFAULT_ITEMS[cat]?.length ? `<button class="btn primary" data-act="seed-items">Добавить типовой список</button>` : ''}<button class="btn ${DEFAULT_ITEMS[cat]?.length ? '' : 'primary'}" data-act="add-item">+ ${ITEM_WORD[cat].add}</button>`}</div></div>`;
   h += `<div class="segb" role="group" aria-label="Что показать">${[['bal','Остаток'],['in','Приход'],['out','Расход']].map(([k,l]) => `<button data-sub="${k}" aria-pressed="${sub===k}">${l}</button>`).join('')}</div>`;
   if(sub==='bal'){
     const mon = today().slice(0,7);
@@ -946,7 +1029,7 @@ function stockCatView(cat){
     const ops = S.moves.filter(m => m.kind===kind && itemById(m.item)?.cat===cat && (!f || m.item===f || m.vehicle===f))
       .sort((a,b) => b.date.localeCompare(a.date) || (b.created||0)-(a.created||0));
     const vs = cat==='fuel' && kind==='out' ? vehicles().filter(v => S.moves.some(m => m.vehicle===v.id)) : [];
-    h += `<div class="actions"><button class="btn primary" data-mv="${kind}">+ ${kind==='in' ? 'Приход' : cat==='fuel' ? 'Заправка техники' : 'Расход'}</button></div>
+    h += `<div class="actions">${canCreate(catDomain(cat)) ? `<button class="btn primary" data-mv="${kind}">+ ${kind==='in' ? 'Приход' : cat==='fuel' ? 'Заправка техники' : 'Расход'}</button>` : ''}</div>
       <div class="field"><select id="sfilter" aria-label="Показать">${opt('', 'Все позиции', f)}${vs.length ? `<optgroup label="${ITEM_WORD[cat].many}">` : ''}${items.map(i => opt(i.id, i.name, f)).join('')}${vs.length ? `</optgroup><optgroup label="Техника">${vs.map(v => opt(v.id, vehLabel(v), f)).join('')}</optgroup>` : ''}</select></div>`;
     if(!ops.length) h += `<div class="empty"><p>${kind==='in' ? 'Приходов пока нет.' : 'Расходов пока нет.'}</p></div>`;
     else {
@@ -965,8 +1048,8 @@ const gsmVehicles = () => vehicles().filter(v => v.gsm !== false);
 const vehLabel = v => v ? v.name + (v.plate ? ' · ' + v.plate : '') : '';
 function techView(){
   const vs = vehicles(), mon = today().slice(0,7), monLabel = parse(mon+'-01').toLocaleDateString('ru-RU',{month:'long'});
-  let h = `<div class="sechead"><h2>Склад техники</h2><button class="btn small adm" data-act="add-vehicle">+ Добавить технику</button></div>`;
-  if(!vs.length) return h + `<div class="empty"><p>Впишите всю технику хозяйства: трактора, машины, погрузчики, генераторы — с госномером и номером прицепа. Технику, отмеченную «в ГСМ», можно выбрать при заправке.</p><div class="actions"><button class="btn primary adm" data-act="add-vehicle">+ Добавить технику</button></div></div>`;
+  let h = `<div class="sechead"><h2>Склад техники</h2><button class="btn small m-fuel" data-act="add-vehicle">+ Добавить технику</button></div>`;
+  if(!vs.length) return h + `<div class="empty"><p>Впишите всю технику хозяйства: трактора, машины, погрузчики, генераторы — с госномером и номером прицепа. Технику, отмеченную «в ГСМ», можно выбрать при заправке.</p><div class="actions"><button class="btn primary m-fuel" data-act="add-vehicle">+ Добавить технику</button></div></div>`;
   const off = vs.filter(v => v.gsm === false).length;
   h += `<p class="muted" style="margin:0">Всего ${vs.length} ${plural(vs.length,'единица','единицы','единиц')} · в ГСМ ${vs.length - off}</p>`;
   h += `<div class="list">` + vs.map(v => {
@@ -976,7 +1059,7 @@ function techView(){
     return `<button class="row" data-veh="${v.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(v.name)}</div><div class="sub">${esc(sub || 'без номера')}</div></span>
       <span class="side">${v.gsm === false ? '<span class="pill">не в ГСМ</span>' : '<span class="pill ok">в ГСМ</span>'}</span></button>`;
   }).join('') + `</div>`;
-  if(off) h += `<div class="actions"><button class="btn adm" data-act="veh-all-gsm">Перевести всю технику в ГСМ (${off})</button></div>`;
+  if(off) h += `<div class="actions"><button class="btn m-fuel" data-act="veh-all-gsm">Перевести всю технику в ГСМ (${off})</button></div>`;
   h += `<button class="link view-link" data-act="excel" data-sec="tech,fuel">Выгрузить технику и ГСМ в Excel</button>`;
   return h;
 }
@@ -986,10 +1069,10 @@ function vehicleSheet(id){
   const ops = S.moves.filter(m => m.vehicle===id).sort((a,b) => b.date.localeCompare(a.date) || (b.created||0)-(a.created||0));
   const tot = {}; ops.forEach(m => { const it = itemById(m.item), k = it?.name || '?'; tot[k] = {q:(tot[k]?.q||0) + (+m.qty||0), u:it?.unit||'л'}; });
   const body = `<div class="panel">${[['Тип', v.vtype], ['Госномер', v.plate], ['Номер прицепа', v.trailer], ['Заметка', v.note]].filter(x => x[1]).map(([k,x]) => `<div class="kv"><span>${k}</span><strong>${esc(x)}</strong></div>`).join('') || '<p class="muted" style="margin:0">Номера не указаны.</p>'}</div>
-    <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="vgsm" ${v.gsm === false ? '' : 'checked'} ${S.admin ? '' : 'disabled'}><span>В ГСМ — можно выбрать при заправке</span></label>
+    <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="vgsm" ${v.gsm === false ? '' : 'checked'} ${canManage('fuel') ? '' : 'disabled'}><span>В ГСМ — можно выбрать при заправке</span></label>
     <div class="panel"><div class="eyebrow">Всего заправлено</div>${Object.keys(tot).length ? Object.entries(tot).map(([k,x]) => `<div class="kv"><span>${esc(k)}</span><strong>${num(round(x.q,2))} ${esc(x.u)}</strong></div>`).join('') : '<p class="muted" style="margin:0">Пока не заправлялась.</p>'}</div>
-    ${v.gsm === false ? '' : `<div class="actions"><button class="btn primary" id="vfill">Заправить</button></div>`}
-    <div class="actions"><button class="btn adm" id="vedit">Изменить</button><button class="btn danger adm" id="vdel">Удалить</button></div><div id="vdelc"></div>
+    ${v.gsm === false || !canCreate('fuel') ? '' : `<div class="actions"><button class="btn primary" id="vfill">Заправить</button></div>`}
+    <div class="actions"><button class="btn m-fuel" id="vedit">Изменить</button><button class="btn danger m-fuel" id="vdel">Удалить</button></div><div id="vdelc"></div>
     ${ops.length ? `<div class="list">${ops.map(moveRow).join('')}</div>` : ''}`;
   openSheet(vehLabel(v), body, s => {
     const g = s.querySelector('#vgsm'); g.onchange = () => { store.merge('items', id, {gsm:g.checked}); toast(g.checked ? 'Техника доступна в ГСМ' : 'Убрана из ГСМ'); setTimeout(() => vehicleSheet(id), 150); };
@@ -1012,27 +1095,25 @@ function moveRow(m){
 
 /* ----- Ещё ----- */
 function moreView(){
-  if(isFeeder()) return `<div><div class="eyebrow">${esc(whoName(S.email))} · кормач</div><h2>Ещё</h2></div><div class="list">
-    <button class="row" data-tab-go="feedsheet" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Табель кормления</div><div class="sub">Скачать и распечатать</div></span><span class="side">›</span></button>
-    <button class="row" data-nav="stock" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Склад кормов</div><div class="sub">Остатки, приход, расход</div></span><span class="side">›</span></button>
-    <button class="row" data-nav="herd" data-hm2="pens" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Стадо по загонам</div><div class="sub">Только просмотр</div></span><span class="side">›</span></button></div>
-    ${S.local ? '' : `<div class="actions"><button class="btn" data-act="logout">Выйти из учётной записи</button></div>`}`;
-  const plan = planItems(), soon = plan.filter(i => daysBetween(today(), i.date) <= 7).length;
-  const row = (go, t, s) => `<button class="row" data-tab-go="${go}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${t}</div><div class="sub">${s}</div></span><span class="side">›</span></button>`;
-  let h = `<div><div class="eyebrow">${esc(S.demo ? 'Демо' : S.local ? 'Учёт на этом устройстве' : (S.email||'') + (S.admin ? ' · администратор' : ''))}</div><h2>Ещё</h2></div><div class="list">
-    ${row('yplan','Годовой план и напоминания','Работа на год по месяцам, лаборатория, напоминания заранее')}
-    ${row('genetics','Генетика: подбор баранов','Родство, риск инбридинга, кого к какому барану')}
-    ${row('daily','Отчёт за текущий день','Поголовье по группам, молоко и средний удой, остатки кормов')}
-    ${row('events','События', 'Что сделать сегодня и что впереди: уколы, ревакцинации, окоты')}
-    ${row('money','Финансы','Доходы и расходы по месяцам')}
-    ${row('stats','Сводка','Поголовье, приплод, молоко, деньги за год')}
-    <button class="row adm" data-tab-go="people" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Пользователи и имена</div><div class="sub">Чтобы в записях было видно, кто внёс</div></span><span class="side">›</span></button>
-    <button class="row adm" data-tab-go="log" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Журнал изменений</div><div class="sub">Кто, когда и что внёс, изменил или удалил</div></span><span class="side">›</span></button>
-    <button class="row adm" data-act="import" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Загрузка из Excel</div><div class="sub">Список животных по загонам из вашей таблицы</div></span><span class="side">›</span></button>
- <button class="row" data-tab-go="vet" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Ветеринария</div><div class="sub">Лечение по схемам, вакцинация, дегельминтизация</div></span><span class="side">›</span></button>
-    <button class="row" data-tab-go="feedsheet" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Табель кормления</div><div class="sub">Бланк по загонам — скачать в Excel и распечатать</div></span><span class="side">›</span></button>
-    <button class="row" data-act="excel" style="grid-template-columns:1fr auto"><span class="main"><div class="name">Выгрузка в Excel</div><div class="sub">Стадо, окоты, корма, ГСМ, молоко, финансы за период</div></span><span class="side">›</span></button></div>`;
-  h += `<div class="panel"><div class="eyebrow">Резервная копия</div><p class="muted">Файл со всеми записями. Сохраняйте его раз в месяц.</p><div class="actions"><button class="btn" data-act="backup">Сохранить копию</button></div></div>`;
+  const row = (go, t, sub, attr) => `<button class="row" ${attr || `data-tab-go="${go}"`} style="grid-template-columns:1fr auto"><span class="main"><div class="name">${t}</div><div class="sub">${sub}</div></span><span class="side">›</span></button>`;
+  const rows = [
+    canTab('daily') && row('daily', 'Отчёт за текущий день', 'Поголовье по группам, молоко и средний удой, остатки кормов'),
+    canTab('events') && row('events', 'События', 'Что сделать сегодня и что впереди: уколы, ревакцинации, окоты'),
+    canTab('vet') && row('vet', 'Ветеринария', 'Лечение по схемам, вакцинация, дегельминтизация'),
+    canTab('yplan') && row('yplan', 'Годовой план и напоминания', 'Работа на год по месяцам, лаборатория, напоминания заранее'),
+    canTab('genetics') && row('genetics', 'Генетика: подбор баранов', 'Родство, риск инбридинга, кого к какому барану'),
+    canTab('feedsheet') && row('feedsheet', 'Табель кормления', 'Бланк по загонам — скачать в Excel и распечатать'),
+    canTab('stock') && !canTab('herd') && row('', 'Склад', 'Остатки, приход, расход', 'data-nav="stock"'),
+    canTab('money') && row('money', 'Финансы', 'Доходы и расходы по месяцам'),
+    canTab('stats') && row('stats', 'Сводка', 'Поголовье, приплод, молоко, деньги за год'),
+    row('', 'Выгрузка в Excel', 'Данные по вашим разделам за выбранный период', 'data-act="excel"'),
+    S.admin && row('people', 'Пользователи и роли', 'Имена, роли и права доступа'),
+    seeWho() && row('log', 'Журнал изменений', 'Кто, когда и что внёс, изменил или удалил'),
+    S.admin && row('', 'Загрузка из Excel', 'Список животных, журнал молока, склад кормов, аптека', 'data-act="import"')
+  ].filter(Boolean).join('');
+  let h = `<div><div class="eyebrow">${esc(S.demo ? 'Демо · ' + (ROLE_DEF[roleOf()]?.l || '') : S.local ? 'Учёт на этом устройстве' : whoName(S.email) + ' · ' + (ROLE_DEF[roleOf()]?.l || '').toLowerCase())}</div><h2>Ещё</h2></div><div class="list">${rows}</div>`;
+  if(S.admin || roleOf() === 'manager') h += `<div class="panel"><div class="eyebrow">Резервная копия</div><p class="muted">Файл со всеми записями. Сохраняйте его раз в месяц.</p><div class="actions"><button class="btn" data-act="backup">Сохранить копию</button></div></div>`;
+  if(S.demo) h += `<div class="panel"><div class="eyebrow">Демо: посмотреть программу глазами роли</div><select id="demo-role">${Object.entries(ROLE_DEF).map(([k, r]) => opt(k, r.l, roleOf())).join('')}</select></div>`;
   if(S.local && !S.demo) h += `<div class="banner">Записи хранятся только на этом устройстве. Чтобы вести учёт вместе, настройте синхронизацию по инструкции README.</div>`;
   if(!S.local) h += `<div class="actions"><button class="btn" data-act="logout">Выйти из учётной записи</button></div>`;
   return h;
@@ -1143,7 +1224,10 @@ function bindView(){
   on('[data-fin]', b => financeForm(S.finance.find(r => r.id===b.dataset.fin)));
   on('[data-m]', b => { const [y,m] = S.month.split('-').map(Number); S.month = iso(new Date(y, m-1+(+b.dataset.m), 1)).slice(0,7); render(); });
   on('[data-tab-go]', b => go(b.dataset.tabGo));
+  { const dr = document.querySelector('#demo-role'); if(dr) dr.onchange = () => { S.demoRole = dr.value; S.admin = dr.value === 'admin'; applyRole(); render(); toast('Вы смотрите как: ' + ROLE_DEF[dr.value].l); }; }
   on('[data-fmv]', b => moveForm({cat:'feed', kind:b.dataset.fmv}));
+  on('[data-fuelmv]', b => moveForm({cat:'fuel', kind:b.dataset.fuelmv}));
+  on('[data-stockgo]', b => { S.stockCat = b.dataset.stockgo; S.stockSub = 'bal'; go('stock'); });
   on('[data-evopen]', b => { const e = S.events.find(x => x.id===b.dataset.evopen); if(!e) return; if(e.course) courseSheet(e.course); else if(e.scheme) courseSheet(e.id); else if((e.animalIds||[]).length===1) animalCard(e.animalIds[0]); else eventForm(e); });
   on('[data-cday]', b => { S.calDay = S.calDay===b.dataset.cday ? '' : b.dataset.cday; render(); });
   on('[data-calm]', b => { const [y, m] = (S.calMonth || today().slice(0,7)).split('-').map(Number); S.calMonth = iso(new Date(y, m - 1 + (+b.dataset.calm), 1)).slice(0,7); S.calDay = ''; render(); });
@@ -1214,17 +1298,22 @@ function openSheet(title, body, bind, key){
   $('#scrim').onclick = e => { if(e.target.id==='scrim') closeSheet(); };
   document.body.style.overflow = 'hidden';
   bind && bind($('#sheetRoot .sheet'));
-  if(!S.admin) lockForWorker($('#sheetRoot .sheet'), key);
+  { const dom = S.sheetDom; S.sheetDom = undefined; const sh = $('#sheetRoot .sheet');
+    if(isViewer()) lockForWorker(sh, key, true);
+    else if(MANAGE_KEYS.has(key)){ if(!canManage(dom)) lockForWorker(sh, key, true); }
+    else if(!(dom === undefined ? ['admin', 'manager'].includes(roleOf()) : canEdit(dom))) lockForWorker(sh, key); }
 }
 // Работник может вносить новые записи, но не менять и не удалять существующие
-function lockForWorker(sheet, key){
-  const editForm = sheet.querySelector('form') && sheet.querySelector('form .btn.danger');
-  if(!(editForm || ['fdform','rform','itform'].includes(key))) return;
-  if(key==='mform' || key==='mqform') return;
+const MANAGE_KEYS = new Set(['itform', 'schemeform', 'rtform']);
+function lockForWorker(sheet, key, force){
+  if(!sheet || !sheet.querySelector('form')) return;
+  const editForm = sheet.querySelector('form .btn.danger');
+  if(!force && !(editForm || ['fdform','rform'].includes(key))) return;
+  if(!force && (key==='mform' || key==='mqform')) return;
   sheet.querySelectorAll('form input, form select, form textarea, form button').forEach(el => { el.disabled = true; });
   sheet.querySelectorAll('form button[type=submit], form .btn.danger, #fdskip').forEach(el => el.hidden = true);
   const head = sheet.querySelector('.sheet-head');
-  head.insertAdjacentHTML('afterend', '<div class="banner">Только просмотр: уже внесённые записи изменить нельзя.</div>');
+  head.insertAdjacentHTML('afterend', `<div class="banner">${force && !editForm ? 'Только просмотр: у вашей роли нет прав вносить такие записи.' : 'Только просмотр: изменить эту запись ваша роль не может.'}</div>`);
 }
 function closeSheet(){ $('#sheetRoot').innerHTML = ''; sheetState = null; document.body.style.overflow = ''; }
 document.addEventListener('keydown', e => { if(e.key==='Escape' && sheetState) closeSheet(); });
@@ -1299,7 +1388,7 @@ function vetView(){
   let h = `<button class="back" data-nav="herd">‹ Стадо</button><h2 class="page">Ветеринария</h2>`;
   if(loading('events', 'settings')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
   const tasks = vetTasks(), act = activeCourses(), sub = S.vetSub || 'today';
-  h += `<div class="actions"><button class="btn primary" data-vnew="ill">Лечение</button><button class="btn" data-vnew="vac">Вакцинация</button><button class="btn" data-vnew="treat">Дегельминтизация</button><button class="btn" data-vnew="vit">Витаминизация</button></div>`;
+  if(canCreate('vet')) h += `<div class="actions"><button class="btn primary" data-vnew="ill">Лечение</button><button class="btn" data-vnew="vac">Вакцинация</button><button class="btn" data-vnew="treat">Дегельминтизация</button><button class="btn" data-vnew="vit">Витаминизация</button></div>`;
   h += `<div class="segb" role="group">${[['today', `Сегодня${tasks.length ? ' · ' + tasks.length : ''}`], ['courses', `Курсы${act.length ? ' · ' + act.length : ''}`], ['schemes', 'Схемы']].map(([k, l]) => `<button data-vsub="${k}" aria-pressed="${sub === k}">${l}</button>`).join('')}</div>`;
   if(sub === 'today'){
     if(!tasks.length) return h + `<div class="empty"><p>На сегодня процедур нет.${act.length ? ` Идёт курсов: ${act.length}.` : ''}</p><p class="muted">Назначьте лечение кнопкой выше — по схеме приложение само будет показывать, кого и чем колоть каждый день, а в день оценки спросит результат.</p></div>`;
@@ -1320,10 +1409,10 @@ function vetView(){
   } else {
     const k = S.vetKind || 'ill', list = schemes().filter(x => x.kind === k).sort((a, b) => a.name.localeCompare(b.name, 'ru', {numeric:true}));
     h += `<div class="chips" style="flex-wrap:wrap">${Object.entries(SCHEME_KIND).map(([kk, l]) => `<button class="chip" data-vkind="${kk}" aria-pressed="${k === kk}">${l}</button>`).join('')}</div>
-      <div class="actions"><button class="btn primary adm" data-act="add-scheme">+ Новая схема</button></div>`;
+      <div class="actions"><button class="btn primary m-vet" data-act="add-scheme">+ Новая схема</button></div>`;
     h += list.length ? `<div class="list">${list.map(sc => `<button class="row" data-scheme="${sc.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(sc.name)}</div>
         ${(sc.steps || []).map(st => `<div class="sub">${esc(stepText(st))}</div>`).join('')}${sc.kind === 'ill' ? `<div class="sub">результат — на ${schemeCheckDay(sc)}-й день</div>` : sc.repeat ? `<div class="sub">повтор через ${sc.repeat} ${plural(+sc.repeat, 'день', 'дня', 'дней')}${+sc.repeatTimes > 1 ? `, ${sc.repeatTimes} раза` : ''}</div>` : ''}</span><span class="side">›</span></button>`).join('')}</div>`
-      : `<div class="empty"><p>Схем «${SCHEME_KIND[k]}» пока нет.</p>${k === 'ill' ? `<p class="muted">Например: «1 Понос молодняк» — Кетопрофен 0,5 мл в/м 3 дня + Цефтонит форте 1,0 мл п/к 1 день, результат на 4-й день.</p><div class="actions"><button class="btn adm" data-act="seed-scheme">Добавить этот пример</button></div>` : ''}</div>`;
+      : `<div class="empty"><p>Схем «${SCHEME_KIND[k]}» пока нет.</p>${k === 'ill' ? `<p class="muted">Например: «1 Понос молодняк» — Кетопрофен 0,5 мл в/м 3 дня + Цефтонит форте 1,0 мл п/к 1 день, результат на 4-й день.</p><div class="actions"><button class="btn m-vet" data-act="seed-scheme">Добавить этот пример</button></div>` : ''}</div>`;
     h += `<p class="muted" style="margin:0">Дозировку и особенности каждого препарата впишите в «Склад → Аптека» — они подставляются в схему и видны при процедуре.</p>`;
   }
   return h;
@@ -1337,6 +1426,7 @@ function seedScheme(){
 }
 
 function schemeForm(sc, kind0){
+  S.sheetDom = 'vet';
   const isEdit = !!sc, v = sc ? JSON.parse(JSON.stringify(sc)) : {kind:kind0 || S.vetKind || 'ill', name:'', steps:[{name:'', dose:'', route:'', from:1, days:1}], checkDay:'', repeat:'', note:''};
   const drugs = itemsOf('vet');
   const stepRow = (st, i) => `<div class="panel step" data-i="${i}">
@@ -1396,6 +1486,7 @@ function schemeForm(sc, kind0){
 
 // Отметить процедуру дня
 function doseSheet(evId, day){
+  if(!canCreate('vet')){ roToast(); return; }
   const ev = S.events.find(e => e.id === evId); if(!ev) return; const c = courseInfo(ev); const steps = stepsOnDay(c.sc, day);
   const date = addDays(ev.date, day - 1);
   const list = c.animals.map(byId).filter(Boolean).sort(penSort);
@@ -1420,6 +1511,7 @@ function doseSheet(evId, day){
 
 // Результат лечения по каждому животному
 function resultSheet(evId){
+  if(!canCreate('vet')){ roToast(); return; }
   const ev = S.events.find(e => e.id === evId); if(!ev) return; const c = courseInfo(ev);
   const list = c.animals.map(byId).filter(Boolean).sort(penSort), other = schemes().filter(x => x.kind === 'ill');
   const body = `<p class="muted" style="margin:0">${esc(c.sc.name)}, начато ${fmtD(ev.date)}. Выберите итог для каждого животного.</p>
@@ -1445,7 +1537,7 @@ function resultSheet(evId){
         const sc = k.endsWith('|same') ? c.sc : schemeById(k); if(!sc) continue;
         store.add('events', {type:'ill', date:t, animalIds:ids, scheme:JSON.parse(JSON.stringify(sc)), drug:sc.name, note: k.endsWith('|same') ? 'повтор схемы' : `после «${c.sc.name}»`, prevCourse:evId}); n++;
       }
-      Object.entries(outcomes).forEach(([id, o]) => { if(o.r === 'dead' && S.admin) store.merge('animals', id, {status:'dead', outDate:t}); });
+      Object.entries(outcomes).forEach(([id, o]) => { if(o.r === 'dead' && (S.admin || canEdit('vet'))) store.merge('animals', id, {status:'dead', outDate:t}); });
       const okN = Object.values(outcomes).filter(o => o.r === 'ok').length;
       toast(`Сохранено: здоровы ${okN}${n ? `, назначено курсов ${n}` : ''}`); closeSheet();
     };
@@ -1465,7 +1557,7 @@ function courseSheet(evId){
       return `<button class="row" ${btn} style="grid-template-columns:auto 1fr auto"><span class="pill">${d}-й · ${fmtShort(date)}</span><span class="main"><div class="sub">${esc(label)}</div></span><span class="side">${state}</span></button>`; }).join('')}</div>
     <div class="panel"><div class="eyebrow">Животные · ${heads((ev.animalIds || []).length)}</div>${(ev.animalIds || []).map(id => { const a = byId(id); if(!a) return ''; const r = c.results.find(x => x.outcomes?.[id]); return `<div class="kv"><button class="link" data-go="${id}">${esc(animalLabel(a))}</button><span class="muted">${r ? RESULT[r.outcomes[id].r] + (r.outcomes[id].scheme ? ': ' + esc(schemeById(r.outcomes[id].scheme)?.name || '') : '') : a.status !== 'active' ? STATUS[a.status] : 'в курсе'}</span></div>`; }).join('')}</div>
     ${ev.note ? `<p class="muted" style="margin:0">${esc(ev.note)}</p>` : ''}
-    <div class="actions"><button class="btn danger adm" id="cdel">Удалить курс</button></div><div id="cdelc"></div>`;
+    <div class="actions"><button class="btn danger e-vet" id="cdel">Удалить курс</button></div><div id="cdelc"></div>`;
   openSheet(c.sc.name, body, s => {
     s.querySelectorAll('[data-dose]').forEach(b => b.onclick = () => { const [id, d] = b.dataset.dose.split(':'); doseSheet(id, +d); });
     s.querySelectorAll('[data-res]').forEach(b => b.onclick = () => resultSheet(b.dataset.res));
@@ -1494,7 +1586,7 @@ function agendaItems(to){
   });
   const bal = stockBalance();
   (S.items || []).filter(i => i.cat === 'vet' && i.expiry && (bal[i.id] || 0) > 0 && i.expiry <= to).forEach(i => out.push({date: i.expiry < t ? t : i.expiry, kind:'stock', title:`${i.expiry < t ? 'Просрочен' : 'Истекает срок'}: ${i.name}`, sub:`годен до ${fmtD(i.expiry)} · остаток ${num(bal[i.id])} ${i.unit}`, attr:`data-item="${i.id}"`, btn:'Открыть'}));
-  return out.concat(planAgenda(to)).sort((a, b) => a.date.localeCompare(b.date) || (a.kind === 'vet' ? -1 : 1));
+  return out.concat(planAgenda(to)).filter(x => canTab('vet') || !(x.kind === 'vet' || x.vet)).sort((a, b) => a.date.localeCompare(b.date) || (a.kind === 'vet' ? -1 : 1));
 }
 const todayCount = () => agendaItems(today()).filter(x => x.kind !== 'stock').length;
 function eventsView(){
@@ -1701,17 +1793,17 @@ function planAgenda(to){
   return planTasks(addDays(t, -45), addDays(to > t ? to : t, 60)).filter(x => !x.done && (x.due <= to || addDays(x.due, -x.remind) <= t)
     && !(x.r && x.r.created && x.due < x.r.created) && x.due >= addDays(t, x.r ? -30 : -14)).map(x => {
     const dd = daysBetween(t, x.due);
-    return {date:x.due, kind:'plan', title:x.title, sub:`${dd > 0 ? `через ${dd} ${plural(dd, 'день', 'дня', 'дней')} · ` : ''}${x.sub}`, attr:`data-task="${esc(x.key)}|${x.due}"`, btn: dd > 0 ? 'Открыть' : 'Сделано'};
+    return {date:x.due, kind:'plan', vet: x.cat === 'vet', title:x.title, sub:`${dd > 0 ? `через ${dd} ${plural(dd, 'день', 'дня', 'дней')} · ` : ''}${x.sub}`, attr:`data-task="${esc(x.key)}|${x.due}"`, btn: dd > 0 ? 'Открыть' : 'Сделано'};
   });
 }
 function taskSheet(key, due){
   const x = planTasks(addDays(due, -1), addDays(due, 1)).find(y => y.key === key && y.due === due); if(!x) return;
   const done = S.events.find(e => e.type === 'task' && e.routine === key && e.due === due);
   const body = `<div class="panel"><div class="eyebrow">${RCAT[x.cat] || ''} · ${fmtD(due)}</div><div class="name" style="font-weight:600">${esc(x.title)}</div><div class="sub">${esc(x.sub)}</div>${x.note ? `<p class="muted" style="margin:6px 0 0">${esc(x.note)}</p>` : ''}</div>
-    ${done ? `<p class="pill ok" style="align-self:flex-start">Сделано ${fmtD(done.date)}${S.admin && done.byEmail ? ' · ' + esc(whoName(done.byEmail)) : ''}</p>` : `
+    ${!done && !canCreate('plan') ? '' : done ? `<p class="pill ok" style="align-self:flex-start">Сделано ${fmtD(done.date)}${seeWho() && done.byEmail ? ' · ' + esc(whoName(done.byEmail)) : ''}</p>` : `
     ${fld('tk-note', 'Заметка (необязательно)', `<input id="tk-note" autocomplete="off">`)}
     <div class="actions"><button class="btn primary" id="tkdone">Отметить: сделано</button>${x.etype && ET[x.etype] ? `<button class="btn" id="tkev">Записать: ${ET[x.etype].t.toLowerCase()}</button>` : ''}</div>`}
-    ${x.r && S.admin ? `<div class="actions"><button class="btn" id="tkedit">Изменить дело в плане</button></div>` : ''}`;
+    ${x.r && canManage('plan') ? `<div class="actions"><button class="btn" id="tkedit">Изменить дело в плане</button></div>` : ''}`;
   openSheet('Дело по плану', body, s => {
     const mark = () => store.add('events', {type:'task', routine:key, due, date:today(), title:x.title, animalIds:x.ids || [], note:s.querySelector('#tk-note')?.value.trim() || ''});
     const d1 = s.querySelector('#tkdone'); if(d1) d1.onclick = () => { mark(); toast('Отмечено: ' + x.title); closeSheet(); };
@@ -1720,6 +1812,7 @@ function taskSheet(key, due){
   }, 'task');
 }
 function routineForm(r){
+  S.sheetDom = 'plan';
   const isEdit = !!r?.id, v = {cat:'vet', unit:'year', every:1, month:new Date().getMonth() + 1, day:1, remind:7, start:today(), ...r};
   const body = `<form id="rtf" novalidate>
     ${fld('rt-title', 'Что сделать *', `<input id="rt-title" value="${esc(v.title)}" placeholder="напр. Пробы молока в лабораторию" autocomplete="off">`)}
@@ -1890,7 +1983,7 @@ function animalCard(id){
     <div style="display:flex;align-items:center;gap:14px"><span class="tag big">${esc(a.tag)}</span>
       <div style="min-width:0"><div class="title-lg">${esc(animalTitle(a))} ${sexIcon(a.sex)}</div>
       <div class="muted">${a.status==='active' ? `<span class="pill ok">В стаде</span>` : `<span class="pill">${STATUS[a.status]}${a.outDate?' · '+fmtD(a.outDate):''}</span>`}</div></div></div>
-    <div class="evbtns">${isFeeder() ? '' : a.status==='active' ? `${a.sex==='f' ? `<button class="btn ${planItems().some(i => i.kind==='birth' && i.animal.id===id) ? 'primary' : ''}" data-cev="birth">Окот</button>` : ''}<button class="btn" data-cev="ill">Лечение</button><button class="btn" data-cev="vac">Вакцинация</button><button class="btn" data-cev="treat">Дегельминтизация</button><button class="btn" data-cev="vit">Витаминизация</button><button class="btn" data-cev="">Другое…</button>` : ''}${isFeeder() ? '' : '<button class="btn" id="edit">Изменить</button>'}</div>
+    <div class="evbtns">${a.status==='active' ? `${a.sex==='f' && canCreate('birth') ? `<button class="btn ${planItems().some(i => i.kind==='birth' && i.animal.id===id) ? 'primary' : ''}" data-cev="birth">Окот</button>` : ''}${canCreate('vet') ? `<button class="btn" data-cev="ill">Лечение</button><button class="btn" data-cev="vac">Вакцинация</button><button class="btn" data-cev="treat">Дегельминтизация</button><button class="btn" data-cev="vit">Витаминизация</button>` : ''}${canCreate('herd') || canCreate('birth') ? `<button class="btn" data-cev="">Другое…</button>` : ''}` : ''}${canEdit('herd') ? '<button class="btn" id="edit">Изменить</button>' : ''}</div>
     ${(() => { const cs = activeCourses().filter(c => c.animals.includes(id)); return cs.length ? `<div class="panel"><div class="eyebrow">Сейчас</div>${cs.map(c => `<button class="row" data-course="${c.e.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(c.sc.name)}</div><div class="sub">${SCHEME_KIND[c.sc.kind]} · день ${Math.min(c.dayNow, c.check || c.last)} из ${c.check || c.last}${c.pending.length ? ' · сегодня: ' + esc(c.pending.at(-1).steps.map(stepShort).join(' + ')) : c.needResult ? ' · пора оценить результат' : ''}</div></span><span class="side">›</span></button>`).join('')}</div>` : ''; })()}
     <dl class="facts">
       <div><dt>Загон</dt><dd>${a.pen && PEN[a.pen] ? `<button class="link" data-pen-go="${a.pen}">${esc(penLong(a.pen))}</button>${a.since ? `<span class="muted" style="display:block">с ${fmtD(a.since)}</span>` : ''}` : '—'}</dd></div>
@@ -1952,6 +2045,8 @@ function spark(ws){
 
 /* ----- Форма животного ----- */
 function animalForm(a, pre){
+  if(!a && !isViewer() && !canCreate('herd')){ roToast(); return; }
+  S.sheetDom = 'herd';
   a = a || null; const v = {species:'sheep', sex:'f', status:'active', ...(pre||{}), ...(a||{})};
   const females = S.animals.filter(x => x.sex==='f' && x.id!==v.id), males = S.animals.filter(x => x.sex==='m' && x.id!==v.id);
   const sel = (list, cur) => opt('', '— не указано —', cur||'') + list.sort(tagSort).map(x => opt(x.id, animalLabel(x)+' · '+SPECIES[x.species], cur)).join('');
@@ -2022,12 +2117,14 @@ function animalForm(a, pre){
 function eventForm(e){
   const isEdit = !!e.id;
   const v = {type:'vac', date:today(), animalIds:[], ...e};
+  if(!isEdit && !isViewer() && !canCreate(evDomain(v.type))){ const first = Object.keys(ET).find(k => !ET[k].hide && canCreate(evDomain(k))); if(!first){ roToast(); return; } v.type = first; }
+  S.sheetDom = evDomain(v.type);
   const act = S.animals.filter(a => a.status==='active').sort(penSort);
   const chosen = new Set(v.animalIds);
   const males = act.filter(a => a.sex==='m');
   const barnsHere = BARNS.filter(b => act.some(a => PEN[a.pen]?.barn===b));
   const body = `<form id="ef" novalidate>
-    ${fld('e-type','Тип события',`<select id="e-type" name="type" ${isEdit && v.scheme ? 'disabled' : ''}>${Object.entries(ET).filter(([k,o]) => !o.hide || k===v.type).map(([k,o]) => opt(k,o.t,v.type)).join('')}</select>`)}
+    ${fld('e-type','Тип события',`<select id="e-type" name="type" ${isEdit && v.scheme ? 'disabled' : ''}>${Object.entries(ET).filter(([k,o]) => !o.hide || k===v.type).filter(([k]) => isEdit || isViewer() || canCreate(evDomain(k))).map(([k,o]) => opt(k,o.t,v.type)).join('')}</select>`)}
     ${isEdit && v.scheme ? `<input type="hidden" name="type" value="${esc(v.type)}">` : ''}
     <div class="field"><label>Животные · <span id="ecount"></span></label>
       <div class="chips" style="flex-wrap:wrap"><button type="button" class="chip" data-pick="all">Всё стадо</button><button type="button" class="chip" data-pick="f">Все самки</button>${barnsHere.map(b => `<button type="button" class="chip" data-pick="b:${b.id}">${b.name}</button>`).join('')}<button type="button" class="chip" data-pick="none">Снять</button></div>
@@ -2162,18 +2259,20 @@ function penSheet(pid){
   const r = isPen ? penRation(pid) : null, pu = isPen ? feedUse().perPen[pid] : null;
   const body = `
     ${isPen ? `${fld('p-label','Назначение загона',`<input id="p-label" value="${esc(penLabel(pid))}" placeholder="напр. Дойные 2-разовые" autocomplete="off">`)}
+      ${fld('p-rno','Рацион загона (для табеля кормления)',`<select id="p-rno" ${canManage('feed') || canManage('herd') ? '' : 'disabled'}>${opt('', '— по списку животных —', penRationNo(pid))}${[1,2,3,4,5,6].map(n => opt(String(n), 'Рацион №' + n, penRationNo(pid))).join('')}</select>`)}
 ` : ''}
-    <div class="kv"><span class="eyebrow">Животные · ${list.length}</span>${list.length && !isFeeder() ? `<button class="link" id="pall">Отметить всех</button>` : ''}</div>
-    ${list.length && isFeeder() ? `<div class="list scroll">${list.map(a => `<button class="row pickrow" data-go2="${a.id}" style="grid-template-columns:auto 1fr"><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'} · ${esc(groupName(a.species, groupOf(a)))}</span></button>`).join('')}</div>` : ''}
-    ${list.length && !isFeeder() ? `<div class="list scroll">${list.map(a => `<label class="row pickrow"><input type="checkbox" name="pm" value="${a.id}"><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'} · ${esc(age(a.birth)||SPECIES[a.species])}</span></label>`).join('')}</div>
+    <div class="kv"><span class="eyebrow">Животные · ${list.length}</span>${list.length && canCreate('herd') ? `<button class="link" id="pall">Отметить всех</button>` : ''}</div>
+    ${list.length && !canCreate('herd') ? `<div class="list scroll">${list.map(a => `<button class="row pickrow" data-go2="${a.id}" style="grid-template-columns:auto 1fr"><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'} · ${esc(groupName(a.species, groupOf(a)))}</span></button>`).join('')}</div>` : ''}
+    ${list.length && canCreate('herd') ? `<div class="list scroll">${list.map(a => `<label class="row pickrow"><input type="checkbox" name="pm" value="${a.id}"><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'} · ${esc(age(a.birth)||SPECIES[a.species])}</span></label>`).join('')}</div>
       <div class="movebar">${fld('p-to','Переместить отмеченных в',`<select id="p-to">${penOptions('', '— выберите загон —')}</select>`)}<button class="btn primary" id="pmove" disabled>Переместить</button></div>`
       : list.length ? '' : `<div class="empty"><p>${isPen ? 'В загоне никого нет.' : 'Все животные распределены по загонам.'}</p></div>`}
-    ${isPen && !isFeeder() ? `<div class="actions"><button class="btn" id="padd">Добавить животное в этот загон</button></div>` : ''}`;
+    ${isPen && canCreate('herd') ? `<div class="actions"><button class="btn" id="padd">Добавить животное в этот загон</button></div>` : ''}`;
   openSheet(isPen ? penLong(pid) : 'Без загона', body, s => {
     const rs = s.querySelector('#p-ration');
     if(rs) rs.onchange = () => { store.merge('pens', pid, {ration: rs.value || null}); if(rs.value) ensureFeedStart(); toast(rs.value ? 'Рацион назначен' : 'Рацион снят'); setTimeout(() => penSheet(pid), 150); };
     const nr = s.querySelector('#newRation'); if(nr) nr.onclick = () => rationForm(null, [pid]);
-    if(!S.admin){ ['#p-label','#p-ration'].forEach(q => { const el = s.querySelector(q); if(el) el.disabled = true; }); }
+    if(!canManage('herd')){ ['#p-label'].forEach(q => { const el = s.querySelector(q); if(el) el.disabled = true; }); }
+    const rn = s.querySelector('#p-rno'); if(rn) rn.onchange = () => { store.merge('pens', pid, {rationNo: rn.value || DEL}); toast(rn.value ? `Загону назначен рацион №${rn.value}` : 'Рацион по списку животных'); };
     const pl = s.querySelector('#p-label');
     if(pl) pl.onchange = () => { const v = pl.value.trim(); if(v !== penLabel(pid)){ store.merge('pens', pid, {label:v}); toast('Назначение загона сохранено'); } };
     const pm = () => [...s.querySelectorAll('input[name=pm]:checked')].map(c => c.value);
@@ -2280,18 +2379,19 @@ function itemSheet(id){
       <div class="stat"><div class="v">${num(out30)}</div><div class="l">расход за 30 дней, ${esc(it.unit)}</div></div></div>
     ${it.cat==='vet' ? `<div class="panel"><div class="eyebrow">Как применять</div>${[['Дозировка', it.dose], ['Как вводить', it.route], ['Курс', it.days ? `${it.days} ${plural(+it.days,'день','дня','дней')}` : ''], ['Особенности', it.info], ['Срок ожидания', it.withdrawal]].filter(x => x[1]).map(([k,x]) => `<div class="kv"><span>${k}</span><strong style="text-align:right;white-space:pre-wrap">${esc(x)}</strong></div>`).join('') || '<p class="muted" style="margin:0">Не заполнено. Нажмите «Изменить», чтобы вписать дозировку, способ введения и особенности.</p>'}</div>` : ''}
     ${[['Серия', it.series], ['Номер', it.number], ['Годен до', it.expiry ? fmtD(it.expiry) : '']].some(x => x[1]) ? `<div class="panel">${[['Серия', it.series], ['Номер', it.number], ['Годен до', it.expiry ? fmtD(it.expiry) : '']].filter(x => x[1]).map(([k,x]) => `<div class="kv"><span>${k}</span><strong>${esc(x)}</strong></div>`).join('')}</div>` : ''}
-    <div class="actions"><button class="btn primary" data-k="in">Приход</button><button class="btn" data-k="out">Расход</button></div>
-    <div class="actions"><button class="btn adm" id="iedit">Изменить</button><button class="btn danger adm" id="idel">Удалить</button></div><div id="idelc"></div>
+    ${canCreate(catDomain(it.cat)) ? `<div class="actions"><button class="btn primary" data-k="in">Приход</button><button class="btn" data-k="out">Расход</button></div>` : ''}
+    ${canManage(catDomain(it.cat)) ? `<div class="actions"><button class="btn" id="iedit">Изменить</button><button class="btn danger" id="idel">Удалить</button></div><div id="idelc"></div>` : ''}
     ${hist.length ? `<div class="list">${hist.map(h => h.html).join('')}</div>` : `<div class="empty"><p>Операций пока нет.</p></div>`}`;
   openSheet(it.name, body, s => {
     s.querySelectorAll('[data-k]').forEach(b2 => b2.onclick = () => moveForm({cat:it.cat, kind:b2.dataset.k, item:id}));
-    s.querySelector('#iedit').onclick = () => itemForm(it);
-    s.querySelector('#idel').onclick = () => deleteItemBox(s.querySelector('#idelc'), it);
+    const ie = s.querySelector('#iedit'); if(ie) ie.onclick = () => itemForm(it);
+    const idl = s.querySelector('#idel'); if(idl) idl.onclick = () => deleteItemBox(s.querySelector('#idelc'), it);
     s.querySelectorAll('[data-move]').forEach(b2 => b2.onclick = () => moveForm(S.moves.find(m => m.id===b2.dataset.move)));
     s.querySelectorAll('[data-day]').forEach(b2 => b2.onclick = () => feedDayForm(S.feedauto.find(d => d.id===b2.dataset.day)));
   }, 'item:'+id);
 }
 function itemForm(it){
+  S.sheetDom = catDomain(it?.cat || 'feed');
   const cat0 = it?.cat || 'feed', isEdit = !!it?.id, v = {unit: cat0==='fuel' ? 'л' : cat0==='vet' ? 'фл' : 'кг', ...it}, isVeh = v.cat==='vehicle';
   const used = isEdit && S.moves.some(m => m.item===it.id || m.vehicle===it.id);
   const units = UNITS.includes(v.unit) ? UNITS : [...UNITS, v.unit];
@@ -2340,6 +2440,8 @@ function itemForm(it){
 function moveForm(m){
   const isEdit = !!m?.id;
   const cat = isEdit ? (itemById(m.item)?.cat || 'feed') : (m?.cat || 'feed');
+  if(!isEdit && !isViewer() && !canCreate(catDomain(cat))){ roToast(); return; }
+  S.sheetDom = catDomain(cat);
   const v = {kind:'in', date:today(), ...m};
   const items = itemsOf(cat);
   if(!items.length){ itemForm({cat}); return; }
@@ -2355,7 +2457,7 @@ function moveForm(m){
       ${fld('mv-date','Дата',`<input id="mv-date" type="date" name="date" value="${esc(v.date)}">`)}</div>
     <p class="muted" id="mv-bal" style="margin:0"></p>
     <div id="mv-outw">
-      ${cat==='fuel' ? `<div class="field"><div class="kv"><label for="mv-veh">Какую технику заправили</label><button type="button" class="link adm" id="mv-addveh">+ Техника</button></div><select id="mv-veh" name="vehicle">${opt('','— не выбрана —', v.vehicle||'')}${vs.map(x => opt(x.id, vehLabel(x), v.vehicle)).join('')}</select></div>` : ''}
+      ${cat==='fuel' ? `<div class="field"><div class="kv"><label for="mv-veh">Какую технику заправили</label><button type="button" class="link m-fuel" id="mv-addveh">+ Техника</button></div><select id="mv-veh" name="vehicle">${opt('','— не выбрана —', v.vehicle||'')}${vs.map(x => opt(x.id, vehLabel(x), v.vehicle)).join('')}</select></div>` : ''}
       ${cat!=='feed' ? fld('mv-who', cat==='fuel' ? 'Кто заправлял' : 'Кто выдал / применил', `<input id="mv-who" name="who" value="${esc(v.who)}" list="mv-whos" autocomplete="off" placeholder="имя">`) + `<datalist id="mv-whos">${whos.map(n => `<option value="${esc(n)}">`).join('')}</datalist>` : ''}
     </div>
     ${fld('mv-note','', `<input id="mv-note" name="note" value="${esc(v.note)}" list="mv-notes" autocomplete="off">`)}
@@ -2363,7 +2465,7 @@ function moveForm(m){
     <div class="field" id="mv-pricew">${isEdit ? '' : `<label for="mv-price">Сумма, ₽ (попадёт в расходы)</label><input id="mv-price" name="price" type="number" min="0" step="1" inputmode="numeric">`}</div>
     <p class="err" id="mverr" hidden></p>
     <div class="actions"><button class="btn primary" type="submit">${isEdit?'Сохранить':'Записать'}</button></div>
-    ${isEdit ? `${S.admin ? `<p class="muted" style="margin:0">Внёс: ${esc(m.byEmail ? whoName(m.byEmail) + ' (' + m.byEmail + ')' : '—')}${m.created ? ', ' + new Date(m.created).toLocaleString('ru-RU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}) : ''}</p>` : ''}<div class="actions"><button class="btn danger" type="button" id="mvdel">Удалить операцию</button></div><div id="mvdelc"></div>` : ''}
+    ${isEdit ? `${seeWho() ? `<p class="muted" style="margin:0">Внёс: ${esc(m.byEmail ? whoName(m.byEmail) + ' (' + m.byEmail + ')' : '—')}${m.created ? ', ' + new Date(m.created).toLocaleString('ru-RU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}) : ''}</p>` : ''}<div class="actions"><button class="btn danger" type="button" id="mvdel">Удалить операцию</button></div><div id="mvdelc"></div>` : ''}
   </form>`;
   openSheet(isEdit ? 'Изменить операцию' : `${STOCK_FULL[cat]}: ${v.kind==='in' ? 'приход' : cat==='fuel' ? 'заправка' : 'расход'}`, body, s => {
     const f = s.querySelector('#mvf');
@@ -2435,6 +2537,8 @@ function feedDayForm(d){
 
 /* ----- Молоко: надой по головам и отгрузка ----- */
 function milkForm(date, ss, sp){
+  if(!isViewer() && !canCreate('milk')){ roToast(); return; }
+  S.sheetDom = 'milk';
   const doc = milkDoc(date, ss, sp), y = doc?.yields || {};
   const prevDoc = S.milk.filter(m => m.species===sp && m.session===ss && m.date < date).sort((a,b) => b.date.localeCompare(a.date))[0];
   const prev = prevDoc?.yields || {};
@@ -2488,6 +2592,8 @@ function milkForm(date, ss, sp){
 }
 // Общий надой за дойку: литры козьего и овечьего без разбивки по головам
 function milkQuickForm(date, ss){
+  if(!isViewer() && !canCreate('milk')){ roToast(); return; }
+  S.sheetDom = 'milk';
   const val = (sp) => { const m = milkDoc(date, ss, sp); return m ? milkTotal(m) : ''; };
   const perHead = (sp) => { const m = milkDoc(date, ss, sp); return m ? Object.values(m.yields||{}).reduce((a,b) => a + (+b||0), 0) : 0; };
   const body = `<form id="mq" novalidate>
@@ -2531,6 +2637,8 @@ function milkQuickForm(date, ss){
 }
 function milkOutForm(o){
   const isEdit = !!o?.id;
+  if(!isEdit && !isViewer() && !canCreate('milk')){ roToast(); return; }
+  S.sheetDom = 'milk';
   const sp0 = milkSpecies();
   const v = {species: sp0.includes('sheep') && !sp0.includes('goat') ? 'sheep' : (o?.species || (sp0.length===1 ? sp0[0] : 'sheep')), kind:'cheese', date:today(), to:'Сыроварня', ...o};
   const recips = [...new Set(['Сыроварня', ...S.milkout.map(x => x.to).filter(Boolean)])];
@@ -2584,6 +2692,8 @@ function milkOutForm(o){
 
 /* ----- Финансы ----- */
 function financeForm(r){
+  if(!r?.id && !isViewer() && !canCreate('fin')){ roToast(); return; }
+  S.sheetDom = 'fin';
   const v = {kind:'expense', date:today(), ...(r||{})};
   const body = `<form id="ff" novalidate>
     <div class="field"><label>Тип</label><div class="seg"><label><input type="radio" name="kind" value="expense" ${v.kind==='expense'?'checked':''}>Расход</label><label><input type="radio" name="kind" value="income" ${v.kind==='income'?'checked':''}>Доход</label></div></div>
@@ -2858,7 +2968,7 @@ function xlSheets(from, to, secs){
     const rows = S.events.filter(e => e.type !== 'birth' && inP(e.date)).sort((a, b) => a.date.localeCompare(b.date)).map(e => {
       const ids = e.animalIds || [];
       return [e.date, ET[e.type]?.t || 'Событие', e.drug || '', e.dose || '', ids.length, ids.map(tagOf).filter(Boolean).join(', '),
-        e.type === 'weight' ? +e.weight : '', e.type === 'mating' ? tagOf(e.sireId) : '', e.nextDate || '', e.nextDate ? (e.doneNext ? 'да' : 'нет') : '', e.note || '', S.admin && e.byEmail ? whoName(e.byEmail) : ''];
+        e.type === 'weight' ? +e.weight : '', e.type === 'mating' ? tagOf(e.sireId) : '', e.nextDate || '', e.nextDate ? (e.doneNext ? 'да' : 'нет') : '', e.note || '', seeWho() && e.byEmail ? whoName(e.byEmail) : ''];
     });
     out.push({name:'Ветеринария и события', title:'Ветеринария и события', note:period,
       cols:[{h:'Дата',w:12,t:'d'},{h:'Событие',w:22},{h:'Препарат',w:16},{h:'Доза',w:12},{h:'Голов',w:7,t:'i'},{h:'Бирки',w:30},{h:'Вес, кг',w:9,t:'n'},{h:'Производитель',w:12},{h:'Повтор',w:12,t:'d'},{h:'Повтор сделан',w:9},{h:'Заметка',w:24},{h:'Кто записал',w:12}],
@@ -2907,7 +3017,7 @@ function xlSheets(from, to, secs){
     out.push({name:X.n + ' — остатки', title:X.t + ': приход, расход, остаток', note:period, cols:bcols, rows:brows, total:btot});
     const kindName = {in:'Приход', out:cat === 'fuel' ? 'Заправка / расход' : 'Расход'};
     const orows = ops.filter(x => inP(x.date)).sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind)).map(x => [x.date, itemById(x.item)?.name || 'удалено', kindName[x.kind], x.kind === 'in' ? x.qty : -x.qty, itemById(x.item)?.unit || '',
-      ...(cat === 'fuel' ? [x.veh, x.who] : cat === 'vet' ? [x.who] : []), x.kind === 'in' ? x.note : '', x.kind === 'out' ? x.note : '', x.price === '' ? '' : +x.price, S.admin && x.by ? whoName(x.by) : '']);
+      ...(cat === 'fuel' ? [x.veh, x.who] : cat === 'vet' ? [x.who] : []), x.kind === 'in' ? x.note : '', x.kind === 'out' ? x.note : '', x.price === '' ? '' : +x.price, seeWho() && x.by ? whoName(x.by) : '']);
     const extra = cat === 'fuel' ? [{h:'Техника',w:22},{h:'Кто заправлял',w:16}] : cat === 'vet' ? [{h:'Кто выдал / применил',w:16}] : [];
     const cols = [{h:'Дата',w:12,t:'d'},{h:X.w,w:22},{h:'Операция',w:16},{h:'Количество',w:11,t:'n'},{h:'Ед.',w:6},...extra,{h:'От кого',w:22},{h:'Комментарий',w:24},{h:'Сумма',w:11,t:'m'},{h:'Кто записал',w:12}];
     const tot = cols.map((c, k) => c.t === 'm' ? sum(orows, k) : null); tot[0] = null;
@@ -2975,12 +3085,13 @@ function excelSheet(only){
   };
   let saved = null; try{ saved = JSON.parse(localStorage.getItem('otara-xl') || 'null'); }catch(_){}
   const pk = saved?.p && PER[saved.p] ? saved.p : 'month';
-  const sel = only ? Object.fromEntries(Object.keys(XL_SECTIONS).map(k => [k, only.includes(k)])) : (saved?.s || Object.fromEntries(Object.keys(XL_SECTIONS).map(k => [k, true])));
+  const XS = Object.fromEntries(Object.entries(XL_SECTIONS).filter(([k]) => canXl(k)));
+  const sel = only ? Object.fromEntries(Object.keys(XS).map(k => [k, only.includes(k)])) : Object.fromEntries(Object.keys(XS).map(k => [k, saved?.s ? !!saved.s[k] || saved.s[k] === undefined : true]));
   const body = `<form id="xf" novalidate>
     <div class="field"><label>Период</label><div class="chips" style="flex-wrap:wrap">${Object.entries(PER).map(([k, [l]]) => `<label class="chip pchk"><input type="radio" name="p" value="${k}" ${k === pk ? 'checked' : ''}>${l}</label>`).join('')}</div></div>
     <div class="two" id="xcustom">${fld('x-from', 'С', `<input id="x-from" type="date" name="from" value="${PER.custom[1]}" max="${t}">`)}${fld('x-to', 'По', `<input id="x-to" type="date" name="to" value="${t}" max="${t}">`)}</div>
     <div class="field"><div class="kv"><label>Листы в файле</label><button type="button" class="link" id="xall">Все / ни одного</button></div>
-      <div class="list">${Object.entries(XL_SECTIONS).map(([k, l]) => `<label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" name="s" value="${k}" ${sel[k] ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
+      <div class="list">${Object.entries(XS).map(([k, l]) => `<label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" name="s" value="${k}" ${sel[k] ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
     <p class="muted" style="margin:0">Стадо и загоны выгружаются на сегодня, остальное — за выбранный период. Файл открывается в Excel, Google Таблицах и WPS на телефоне.</p>
     <p class="err" id="xerr" hidden></p>
     <div class="actions"><button class="btn primary" type="submit">Скачать Excel</button></div>
@@ -3047,8 +3158,8 @@ function feedSheetView(){
         <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="fs-heads" checked><span>Подставить поголовье</span></label>
         <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="fs-rat" checked><span>Подставить № рациона</span></label>
         <div class="actions"><button class="btn" type="submit">Скачать табель с поголовьем</button></div>
-        ${fld('fs-text', S.admin ? 'Рационы для этого варианта (пустая строка — следующий рацион)' : 'Рационы', `<textarea id="fs-text" rows="12" ${S.admin ? '' : 'readonly'}>${esc(feedSheetText())}</textarea>`)}
-        ${S.admin ? `<div class="actions"><button class="btn" type="button" id="fs-save">Сохранить рационы</button><button class="btn" type="button" id="fs-reset">Как в бланке</button></div>` : ''}
+        ${fld('fs-text', canManage('feed') ? 'Рационы для этого варианта (пустая строка — следующий рацион)' : 'Рационы', `<textarea id="fs-text" rows="12" ${canManage('feed') ? '' : 'readonly'}>${esc(feedSheetText())}</textarea>`)}
+        ${canManage('feed') ? `<div class="actions"><button class="btn" type="button" id="fs-save">Сохранить рационы</button><button class="btn" type="button" id="fs-reset">Как в бланке</button></div>` : ''}
       </form></details>`;
   return h;
 }
@@ -3091,7 +3202,7 @@ function feedSheetBuild(text, date, withHeads, withRation){
       const an = inPen(p.id), n = an.length; tot += n;
       let num = p.n, lbl = penLabel(p.id); const mm = lbl.match(/^загоны\s*(\d+)\s*[–-]\s*(\d+)\s*:?\s*(.*)$/i); if(mm){ num = `${mm[1]}–${mm[2]}`; lbl = mm[3]; }
       const cnt = {}; an.forEach(a => { const r = String(a.rationNo || '').replace(/[^\d]/g, ''); if(r) cnt[r] = (cnt[r] || 0) + 1; });
-      const rn = Object.entries(cnt).sort((x, y) => y[1] - x[1])[0]?.[0];
+      const rn = penRationNo(p.id) || Object.entries(cnt).sort((x, y) => y[1] - x[1])[0]?.[0];
       return [num + (lbl ? ' ' + lbl : ''), withHeads ? (n || '') : '', withRation && rn ? '№' + rn : '', ''];
     });
     rows.push(['Итого', withHeads ? tot : '', '', '']);
