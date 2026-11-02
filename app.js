@@ -205,7 +205,7 @@ const FIELD = {tag:'бирка', name:'кличка', species:'вид', sex:'п�
   motherId:'мать', fatherId:'отец', note:'заметка', outDate:'дата выбытия', since:'в загоне с', type:'событие', date:'дата', drug:'препарат', dose:'доза',
   nextDate:'повтор', doneNext:'повтор сделан', weight:'вес', sireId:'производитель', count:'приплод', animalIds:'животные', kind:'тип', qty:'количество',
   item:'позиция', vehicle:'транспорт', price:'сумма', amount:'сумма', category:'статья', liters:'литры', to:'получатель', extra:'общий надой', session:'дойка',
-  label:'назначение', ration:'рацион', items:'состав', mode:'норма', unit:'единица', plate:'госномер', trailer:'номер прицепа', vtype:'тип техники', gsm:'в ГСМ', who:'кто заправлял / выдал', expiry:'годен до', min:'мин. остаток', route:'как вводить', days:'дней', info:'особенности', withdrawal:'срок ожидания', series:'серия', number:'номер', paused:'пауза', from:'с даты', skipped:'не списывать', locked:'исправлено вручную'};
+  label:'назначение', ration:'рацион', items:'состав', mode:'норма', unit:'единица', plate:'госномер', trailer:'номер прицепа', vtype:'тип техники', gsm:'в ГСМ', who:'кто заправлял / выдал', expiry:'годен до', min:'мин. остаток', route:'как вводить', days:'дней', info:'особенности', withdrawal:'срок ожидания', series:'серия', number:'номер', paused:'пауза', outFat:'упитанность', outWeight:'живая масса', outReason:'диагноз / причина', from:'с даты', skipped:'не списывать', locked:'исправлено вручную'};
 function fmtVal(k, v, d){
   if(v===undefined || v===null || v==='' || v===DEL) return '—';
   if(k==='pen') return penShort(v) || '—';
@@ -1107,6 +1107,7 @@ function moreView(){
     canTab('money') && row('money', 'Финансы', 'Доходы и расходы по месяцам'),
     canTab('stats') && row('stats', 'Сводка', 'Поголовье, приплод, молоко, деньги за год'),
     row('', 'Выгрузка в Excel', 'Данные по вашим разделам за выбранный период', 'data-act="excel"'),
+    canTab('herd') && canXl('herd') && row('', 'Акт выбытия из стада', 'Форма СП-54: убой и падеж за период — сразу в Excel', 'data-act="akt"'),
     seeWho() && row('log', 'Журнал изменений', 'Кто, когда и что внёс, изменил или удалил'),
     S.admin && row('', 'Загрузка из Excel', 'Список животных, журнал молока, склад кормов, аптека', 'data-act="import"')
   ].filter(Boolean).join('');
@@ -1256,7 +1257,7 @@ function bindView(){
   on('[data-act]', b => ({
     'add-animal':() => animalForm(), 'add-fin':() => financeForm(), 'add-ration':() => rationForm(),
     'add-item':() => itemForm({cat:S.stockCat}), 'add-routine':() => routineForm(null), 'seed-plan':seedPlan, 'plan-ics':planIcs, 'plan-xl':planXl, 'daily-xl':dailyXl, 'daily-share':dailyShare, 'add-scheme':() => schemeForm(null, S.vetKind), 'seed-scheme':seedScheme, 'veh-all-gsm':allToGsm, 'seed-items':seedItems, 'milkout':() => milkOutForm(),
-    'feed-log':feedLogSheet, 'q-birth':() => eventForm({type:'birth'}), 'q-vet':() => eventForm({type:'vac'}), 'q-feed':() => moveForm({cat:'feed', kind:'in'}), 'q-fuel':() => moveForm({cat:'fuel', kind:'out'}), 'add-fuel':() => itemForm({cat:'fuel'}), 'add-vehicle':() => itemForm({cat:'vehicle'}), milkquick:() => milkQuickForm(S.milkDate||today(), defaultSession()), import:importSheet, regroup:() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); regroupSheet(ids, filterName(S.filter)); }, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
+    'feed-log':feedLogSheet, akt:aktSheet, 'q-birth':() => eventForm({type:'birth'}), 'q-vet':() => eventForm({type:'vac'}), 'q-feed':() => moveForm({cat:'feed', kind:'in'}), 'q-fuel':() => moveForm({cat:'fuel', kind:'out'}), 'add-fuel':() => itemForm({cat:'fuel'}), 'add-vehicle':() => itemForm({cat:'vehicle'}), milkquick:() => milkQuickForm(S.milkDate||today(), defaultSession()), import:importSheet, regroup:() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); regroupSheet(ids, filterName(S.filter)); }, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
     logout:() => fb && fb.au.signOut(fb.auth)
   })[b.dataset.act]?.());
 }
@@ -2076,6 +2077,8 @@ function animalForm(a, pre){
     </div></details>
     <div class="two">${fld('a-status','Статус',`<select id="a-status" name="status">${Object.entries(STATUS).map(([k,l]) => opt(k,l,v.status)).join('')}</select>`)}
       <div class="field" id="outWrap" ${v.status==='active'?'hidden':''}><label for="a-out">Дата выбытия</label><input id="a-out" type="date" name="outDate" value="${esc(v.outDate||today())}"></div></div>
+    <div id="outMore" ${['dead','slaughter'].includes(v.status)?'':'hidden'}><div class="two">${fld('a-ofat','Упитанность (для акта)',`<select id="a-ofat" name="outFat">${opt('','—',v.outFat||'')}${FATNESS.map(x => opt(x,x,v.outFat)).join('')}</select>`)}${fld('a-ow','Живая масса, кг',`<input id="a-ow" name="outWeight" inputmode="decimal" value="${esc(v.outWeight ?? '')}" autocomplete="off">`)}</div>
+      ${fld('a-orsn','Диагноз / причина',`<input id="a-orsn" name="outReason" value="${esc(v.outReason||'')}" autocomplete="off" placeholder="напр. безоар">`)}</div>
     <div class="field" id="priceWrap" hidden><label for="a-price">Сумма продажи, ₽ (попадёт в финансы)</label><input id="a-price" name="price" type="number" min="0" step="1" inputmode="numeric"></div>
     ${!a ? fld('a-w','Вес сейчас, кг',`<input id="a-w" name="weight" inputmode="decimal" autocomplete="off">`) : ''}
     <p class="err" id="aerr" hidden></p>
@@ -2084,7 +2087,7 @@ function animalForm(a, pre){
   </form>`;
   openSheet(a ? 'Изменить ' + animalLabel(a) : 'Новое животное', body, s => {
     const f = s.querySelector('#af'), st = f.querySelector('#a-status');
-    const sync = () => { s.querySelector('#outWrap').hidden = st.value==='active'; s.querySelector('#priceWrap').hidden = !(st.value==='sold' && (!a || a.status!=='sold')); };
+    const sync = () => { s.querySelector('#outWrap').hidden = st.value==='active'; s.querySelector('#outMore').hidden = !['dead','slaughter'].includes(st.value); s.querySelector('#priceWrap').hidden = !(st.value==='sold' && (!a || a.status!=='sold')); };
     const gsel = f.querySelector('#a-group');
     const fillGroups = () => {
       const sp = f.querySelector('input[name=species]:checked').value, cur = gsel.value || (v.group==='none' ? '__none' : (v.group || ''));
@@ -2108,6 +2111,7 @@ function animalForm(a, pre){
       if(!data.group) delete data.group;
       else if(data.group !== a?.group) data.groupSince = today();
       if(data.status==='active') delete data.outDate;
+      if(!['dead','slaughter'].includes(data.status)){ delete data.outFat; delete data.outWeight; delete data.outReason; } else { if(data.outWeight) data.outWeight = round(dec(data.outWeight), 1); for(const k of ['outFat','outWeight','outReason']) if(data[k] === '' || data[k] == null) delete data[k]; }
       let id = a?.id;
       if(a) store.set('animals', a.id, data); else id = store.add('animals', data);
       if(price) store.add('finance', {date:d.outDate||today(), kind:'income', category:'Продажа животных', amount:price, note:`Бирка №${d.tag}`});
@@ -2952,7 +2956,7 @@ ${sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" Co
     ];
     return zip(files);
   }
-  return {build};
+  return {build, zip};
 })();
 
 /* ----- Что попадает в файл ----- */
@@ -3092,6 +3096,114 @@ function xlSheets(from, to, secs){
       rows, total:[null, '', '', inc, exp, '']});
   }
   return out;
+}
+
+
+/* ===== Акт на выбытие животных (форма СП-54) ===== */
+const OUT_KIND = {slaughter:'убой', dead:'падеж'};
+const FATNESS = ['выше ср', 'ср', 'ниже ср', 'тощ'];
+const sexWord = a => a.species === 'goat' ? (a.sex === 'm' ? 'козел' : 'коза') : (a.sex === 'm' ? 'баран' : 'овца');
+const prefGet = k => { try{ return localStorage.getItem('otara-' + k) || ''; }catch(_){ return ''; } };
+const prefSet = (k, v) => { try{ localStorage.setItem('otara-' + k, v); }catch(_){} };
+function aktSheet(){
+  const t = today(), [y, m] = t.split('-').map(Number), pm = m === 1 ? [y - 1, 12] : [y, m - 1];
+  const from0 = `${pm[0]}-${pad(pm[1])}-01`, to0 = addDays(`${y}-${pad(m)}-01`, -1);
+  const body = `<p class="muted" style="margin:0">Акт по форме СП-54 «на выбытие животных и птицы (забой, прирезка и падеж)» — тот же бланк, что у вас в Excel. В него попадут все животные со статусом «Забой» или «Пал(а)» с датой выбытия за выбранный период.</p>
+    <div class="two">${fld('ak-from', 'С', `<input id="ak-from" type="date" value="${from0}">`)}${fld('ak-to', 'По', `<input id="ak-to" type="date" value="${to0}">`)}</div>
+    <div class="two">${fld('ak-no', 'Номер акта', `<input id="ak-no" autocomplete="off" value="${esc(prefGet('akt-no'))}">`)}${fld('ak-date', 'Дата составления', `<input id="ak-date" type="date" value="${t}">`)}</div>
+    ${fld('ak-who', 'За кем закреплены животные (ФИО)', `<input id="ak-who" autocomplete="off" value="${esc(prefGet('akt-who') || 'Туймуродов И.')}">`)}
+    <div class="chips" style="flex-wrap:wrap"><label class="chip"><input type="checkbox" id="ak-sl" checked> убой</label><label class="chip"><input type="checkbox" id="ak-dd" checked> падеж</label></div>
+    <div id="ak-list"></div>
+    <div class="actions"><button class="btn primary" id="ak-go">Скачать акт в Excel</button></div>`;
+  openSheet('Акт выбытия из стада', body, s => {
+    const q = id => s.querySelector(id), box = q('#ak-list');
+    const pick = () => { const f = q('#ak-from').value, to = q('#ak-to').value, ok = new Set([q('#ak-sl').checked && 'slaughter', q('#ak-dd').checked && 'dead'].filter(Boolean));
+      return S.animals.filter(a => ok.has(a.status) && a.outDate && (!f || a.outDate >= f) && (!to || a.outDate <= to)).sort((a, b) => a.outDate.localeCompare(b.outDate) || tagSort(a, b)); };
+    const draw = () => { const l = pick();
+      box.innerHTML = l.length ? `<div class="eyebrow">В акт попадут: ${heads(l.length)} · убой ${l.filter(a => a.status === 'slaughter').length}, падеж ${l.filter(a => a.status === 'dead').length}</div>
+        <p class="muted" style="margin:0">Упитанность, живую массу и диагноз можно поправить здесь${canEdit('herd') ? ' — сохранятся в карточке животного' : ''}.</p>
+        ${l.map(a => `<div class="panel" data-ak="${a.id}" style="gap:6px"><div class="name" style="white-space:normal">№ ${esc(a.tag)} · ${sexWord(a)} · ${OUT_KIND[a.status]} ${fmtD(a.outDate)}${a.birth ? ` <span class="muted">· род. ${fmtD(a.birth)}</span>` : ''}</div>
+          <div class="two">${fld('', 'Упитанность', `<select data-k="outFat">${opt('', '—', a.outFat || '')}${FATNESS.map(x => opt(x, x, a.outFat)).join('')}</select>`)}${fld('', 'Живая масса, кг', `<input data-k="outWeight" inputmode="decimal" value="${esc(a.outWeight ?? '')}" autocomplete="off">`)}</div>
+          ${fld('', 'Диагноз', `<input data-k="outReason" placeholder="${a.status === 'dead' ? 'напр. безоар' : 'если есть'}" value="${esc(a.outReason || '')}" autocomplete="off">`)}</div>`).join('')}`
+        : `<div class="empty"><p>За этот период нет животных со статусом «Забой» или «Пал(а)». Выбытие отмечается в карточке животного: «Изменить» → Статус и дата выбытия.</p></div>`;
+      q('#ak-go').disabled = !l.length; };
+    ['#ak-from', '#ak-to', '#ak-sl', '#ak-dd'].forEach(id => q(id).onchange = draw); draw();
+    q('#ak-go').onclick = async () => {
+      const l = pick(); if(!l.length) return;
+      const extra = {};
+      box.querySelectorAll('[data-ak]').forEach(r => { const a = byId(r.dataset.ak), g = k => r.querySelector(`[data-k=${k}]`).value.trim();
+        const v = {outFat:g('outFat'), outWeight:g('outWeight') ? round(dec(g('outWeight')), 1) : '', outReason:g('outReason')}; extra[a.id] = v;
+        if(canEdit('herd')){ const ch = {}; for(const k in v) if(String(v[k] ?? '') !== String(a[k] ?? '')) ch[k] = v[k] === '' ? DEL : v[k]; if(Object.keys(ch).length) silently(() => store.merge('animals', a.id, ch)); } });
+      prefSet('akt-no', q('#ak-no').value.trim()); prefSet('akt-who', q('#ak-who').value.trim());
+      const b = q('#ak-go'); b.disabled = true; b.textContent = 'Готовим…';
+      try{
+        const blob = await buildAkt(l.map(a => ({...a, ...extra[a.id]})), {no:q('#ak-no').value.trim(), date:q('#ak-date').value || today(), who:q('#ak-who').value.trim()});
+        const f = q('#ak-from').value, to = q('#ak-to').value;
+        if(await saveFile(`Акт выбытия ${f ? fmtD(f) : ''}-${to ? fmtD(to) : ''}.xlsx`, blob)) toast('Акт сохранён в «Загрузки»');
+      }catch(e){ console.error(e); toast('Не удалось собрать акт: нет бланка. Проверьте связь и попробуйте ещё раз.'); }
+      b.disabled = false; b.textContent = 'Скачать акт в Excel';
+    };
+  }, 'akt');
+}
+async function unzipAll(buf){
+  const u8 = new Uint8Array(buf), dv = new DataView(buf), out = {};
+  let eocd = -1; for(let i = u8.length - 22; i >= 0; i--) if(dv.getUint32(i, true) === 0x06054b50){ eocd = i; break; }
+  let p = dv.getUint32(eocd + 16, true); const n = dv.getUint16(eocd + 10, true), dec8 = new TextDecoder();
+  for(let k = 0; k < n; k++){
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lho = dv.getUint32(p + 42, true);
+    const name = dec8.decode(u8.subarray(p + 46, p + 46 + nl)), start = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true);
+    p += 46 + nl + xl + cl; if(name.endsWith('/')) continue;
+    const raw = u8.subarray(start, start + csize);
+    out[name] = method === 0 ? raw.slice() : new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  }
+  return out;
+}
+async function buildAkt(list, o){
+  const r = await fetch('akt.xlsx'); if(!r.ok) throw new Error('no_template');
+  const files = await unzipAll(await r.arrayBuffer()), td = new TextDecoder();
+  let sh = td.decode(files['xl/worksheets/sheet1.xml']), wb = td.decode(files['xl/workbook.xml']);
+  const BASE = 18, FIRST = 15, LAST = 32, extra = Math.max(0, list.length - BASE);
+  const colN = c => [...c].reduce((s, ch) => s * 26 + ch.charCodeAt(0) - 64, 0);
+  if(extra){
+    const shiftRef = ref => ref.replace(/([A-Z]+)(\d+)/g, (m0, c, n) => +n >= LAST ? c + (+n + extra) : m0);
+    sh = sh.replace(/<row r="(\d+)"[\s\S]*?(?:<\/row>|\/>)(?=\s*<row|\s*<\/sheetData>)/g, m0 => { const n = +m0.match(/<row r="(\d+)"/)[1]; return n >= LAST ? m0.replace(/ r="([A-Z]*)(\d+)"/g, (x, c, k) => ` r="${c}${+k + extra}"`) : m0; });
+    const tplRow = sh.match(/<row r="31"[\s\S]*?<\/row>/)[0], tplMerges = [...sh.matchAll(/<mergeCell ref="([A-Z]+)31:([A-Z]+)31"\/>/g)].map(m0 => [m0[1], m0[2]]);
+    let add = '', addM = '';
+    for(let i = 0; i < extra; i++){ const rn = LAST + i; add += tplRow.replace(/ r="([A-Z]*)31"/g, (x, c) => ` r="${c}${rn}"`); addM += tplMerges.map(([a, b]) => `<mergeCell ref="${a}${rn}:${b}${rn}"/>`).join(''); }
+    sh = sh.replace(tplRow, tplRow + add);
+    sh = sh.replace(/<mergeCell ref="([^"]+)"\/>/g, (m0, ref) => `<mergeCell ref="${shiftRef(ref)}"/>`).replace('</mergeCells>', addM + '</mergeCells>').replace(/<mergeCells count="\d+"/, () => `<mergeCells count="${(sh.match(/<mergeCell ref=/g) || []).length + extra * tplMerges.length}"`);
+    wb = wb.replace(/(стр1!\$A\$1:\$AP\$)(\d+)/, (m0, a, n) => a + (+n + extra));
+    sh = sh.replace(/fitToHeight="1"/, 'fitToHeight="0"');
+  }
+  const xesc = v => String(v).replace(/[&<>"]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'}[c]));
+  const setC = (ref, val) => {
+    const rn = +ref.match(/\d+/)[0], col = ref.match(/[A-Z]+/)[0];
+    const isNum = typeof val === 'number', inner = isNum ? `<v>${val}</v>` : `<is><t xml:space="preserve">${xesc(val)}</t></is>`;
+    const re = new RegExp(`<c r="${ref}"( s="\\d+")?[^>]*?(?:/>|>[\\s\\S]*?</c>)`);
+    const m0 = sh.match(re);
+    if(m0){ sh = sh.replace(re, `<c r="${ref}"${m0[1] || ''}${isNum ? ' t="n"' : ' t="inlineStr"'}>${inner}</c>`); return; }
+    const rowRe = new RegExp(`(<row r="${rn}"[^>]*?)(/>|>([\\s\\S]*?)</row>)`), rm = sh.match(rowRe); if(!rm) return;
+    const cells = [...(rm[3] || '').matchAll(/<c r="([A-Z]+)\d+"[\s\S]*?(?:\/>|<\/c>)/g)].map(x => ({c:x[1], x:x[0]}));
+    cells.push({c:col, x:`<c r="${ref}"${isNum ? ' t="n"' : ' t="inlineStr"'}>${inner}</c>`}); cells.sort((a, b) => colN(a.c) - colN(b.c));
+    sh = sh.replace(rowRe, `${rm[1]}>${cells.map(x => x.x).join('')}</row>`);
+  };
+  const [dy, dm, dd] = o.date.split('-');
+  if(o.no) setC('AA4', o.no);
+  setC('AN7', dd); setC('AO7', dm); setC('AP7', dy);
+  const sig = 44 + extra; setC('G' + sig, dd); setC('I' + sig, dm); setC('P' + sig, dy.slice(2));
+  list.forEach((a, i) => { const rn = FIRST + i;
+    setC('G' + rn, String(a.tag) + (a.name ? ` (${a.name})` : ''));
+    setC('M' + rn, sexWord(a));
+    if(a.birth) setC('N' + rn, fmtD(a.birth));
+    if(a.outFat) setC('Q' + rn, a.outFat);
+    setC('T' + rn, 1);
+    if(a.outWeight) setC('U' + rn, +a.outWeight);
+    setC('AE' + rn, OUT_KIND[a.status] || '');
+    if(a.outReason) setC('AH' + rn, a.outReason);
+    if(o.who) setC('AJ' + rn, o.who);
+  });
+  const enc = new TextEncoder(); files['xl/worksheets/sheet1.xml'] = enc.encode(sh); files['xl/workbook.xml'] = enc.encode(wb);
+  return XL.zip(Object.entries(files).map(([name, data]) => ({name, data})));
 }
 
 /* ----- Сохранение файла ----- */
