@@ -3575,6 +3575,28 @@ function buildMilkPlan(sheets){
   }
   return {sp, issues};
 }
+// Заменить всё молоко в программе данными файла (по видам из файла): лишнее удаляется, остальное перезаписывается как в Excel
+function milkReplaceStat(plan){
+  const sps = new Set(plan.sp.map(s => s.species));
+  const milk = S.milk.filter(m => sps.has(m.species)), out = S.milkout.filter(o => sps.has(o.species));
+  return {milk:milk.length, out:out.length, heads:milk.filter(m => Object.keys(m.yields || {}).length).length};
+}
+function applyMilkReplace(plan){
+  const sps = new Set(plan.sp.map(s => s.species)), wantMilk = new Map(), wantOut = new Map();
+  for(const s of plan.sp){
+    if(s.open > 0){ const d0 = addDays(s.from, -1); wantMilk.set(milkId(d0, 'am', s.species), {date:d0, session:'am', species:s.species, extra:s.open, note:'Остаток в танке на начало (из Excel)'}); }
+    for(const d of s.days){
+      for(const ss of ['am', 'pm']) if(d[ss] != null && d[ss] > 0) wantMilk.set(milkId(d.date, ss, s.species), {date:d.date, session:ss, species:s.species, extra:round(d[ss], 2)});
+      for(const [k, kind] of [['out', 'cheese'], ['feed', 'feed']]) if(d[k] > 0) wantOut.set(`xl-${s.species}-${d.date}-${kind}`, {species:s.species, kind, liters:round(d[k], 2), date:d.date, to: kind === 'cheese' ? 'Сыроварня' : '', note:[d.note, 'из Excel'].filter(Boolean).join(' · '), byEmail:S.email||null});
+    }
+  }
+  let del = 0, docs = 0, outs = 0;
+  S.milk.filter(m => sps.has(m.species) && !wantMilk.has(m.id)).forEach(m => { store.del('milk', m.id); del++; });
+  S.milkout.filter(o => sps.has(o.species) && !wantOut.has(o.id)).forEach(o => { store.del('milkout', o.id); del++; });
+  for(const [id, d] of wantMilk){ const m = findDoc('milk', id); if(m && !Object.keys(m.yields || {}).length && Math.abs((+m.extra || 0) - d.extra) < 1e-9 && m.date === d.date) continue; store.set('milk', id, d); docs++; }
+  for(const [id, d] of wantOut){ const o = findDoc('milkout', id); if(o && Math.abs(+o.liters - d.liters) < 1e-9 && o.kind === d.kind && o.date === d.date) continue; store.set('milkout', id, d); outs++; }
+  return {docs, outs, del};
+}
 function applyMilkPlan(plan){
   let docs = 0, outs = 0;
   for(const s of plan.sp){
@@ -3672,13 +3694,15 @@ function milkImportView(res, plan, fname){
       ${s.feedSum ? `<div class="kv"><span>Выпойка молодняку</span><strong>−${num(s.feedSum)} л</strong></div>` : ''}
       <div class="kv total"><span>Остаток на ${fmtShort(s.to)}</span><strong>${num(s.end)} л</strong></div></div>`).join('')
     + issuesHtml(plan.issues)
+    + (() => { const st = milkReplaceStat(plan); return `<label class="row pickrow" style="grid-template-columns:auto 1fr;align-items:start"><input type="checkbox" id="imrep" checked><span><b>Заменить всё молоко в программе данными файла</b><br><span class="muted">Сейчас в программе: доек ${st.milk}, отгрузок и выпойки ${st.out}${st.heads ? `, из них доек «по головам» ${st.heads} — они тоже заменятся общими литрами` : ''}. Всё, чего нет в файле, удалится — надои, отгрузки и остаток в танке станут точно как в Excel.</span></span></label>`; })()
     + `<p class="muted" style="margin:0">Надои записываются общими литрами за утро и вечер. Повторная загрузка того же файла ничего не задвоит.</p>
     <div class="actions"><button class="btn primary" id="imgo">Загрузить молоко</button></div>`;
   res.querySelector('#imgo').onclick = () => {
     const b = res.querySelector('#imgo'); b.disabled = true; b.textContent = 'Загружаем…';
-    const r = silently(() => applyMilkPlan(plan));
-    journalNote(`Загрузка молока из Excel «${fname}»: доек ${r.docs}, отгрузок ${r.outs}`);
-    toast(`Молоко загружено: доек ${r.docs}, отгрузок ${r.outs}`); closeSheet(); S.milkDate = plan.sp[0].to; go('milk');
+    const rep = res.querySelector('#imrep')?.checked;
+    const r = silently(() => rep ? applyMilkReplace(plan) : applyMilkPlan(plan));
+    journalNote(`Загрузка молока из Excel «${fname}»${rep ? ' с заменой' : ''}: доек ${r.docs}, отгрузок ${r.outs}${r.del ? `, удалено старых записей ${r.del}` : ''}`);
+    toast(`Молоко загружено: доек ${r.docs}, отгрузок ${r.outs}${r.del ? `, удалено ${r.del}` : ''}`); closeSheet(); S.milkDate = plan.sp[0].to; go('milk');
   };
 }
 function feedImportView(res, plan, fname){
