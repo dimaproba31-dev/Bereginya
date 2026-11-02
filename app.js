@@ -29,7 +29,7 @@ const GESTATION = {sheep:147, goat:150};
 const STATUS = {active:'В стаде', sold:'Продан(а)', slaughter:'Забой', dead:'Пал(а)'};
 const ET = {
   ill:{t:'Лечение', vet:1}, vac:{t:'Вакцинация', vet:1}, treat:{t:'Дегельминтизация', vet:1}, vit:{t:'Витаминизация', vet:1}, birth:{t:'Окот'},
-  weight:{t:'Взвешивание'}, mating:{t:'Случка'}, shear:{t:'Стрижка'}, other:{t:'Другое'},
+  manip:{t:'Манипуляция'}, weight:{t:'Взвешивание'}, mating:{t:'Случка'}, shear:{t:'Стрижка', hide:1}, other:{t:'Другое'},
   dose:{t:'Процедура по схеме', hide:1}, result:{t:'Результат лечения', hide:1}, task:{t:'Дело по плану', hide:1}
 };
 const CAT = {
@@ -37,6 +37,9 @@ const CAT = {
   income:['Продажа животных','Молоко','Мясо','Шерсть','Прочее']
 };
 const SESS = {am:'Утро', pm:'Вечер'};
+const MANIP = {dehorn:'Обезроживание', castr:'Кастрация', tail:'Купирование хвоста', hoof:'Обрезка копыт', shear:'Стрижка', surgery:'Операция'};
+const evTitle = e => e.type === 'manip' ? (MANIP[e.manip] || 'Манипуляция') : e.type === 'shear' ? 'Стрижка' : (ET[e.type]?.t || 'Событие');
+const drugsText = e => (e.drugs || []).map(d => [d.name, d.dose, d.route].filter(Boolean).join(' ')).join(' + ');
 const CATEGORIES = ['Дойная','Суягная','Сукозная','Холостая','Подсосная','Ярка','Молодняк','Ягнёнок','Козлёнок','Баран-производитель','Козёл-производитель','Баран-кастрат','Козёл-кастрат','Больная','Декоративная'];
 const MILKOUT = {cheese:'На сыроварню', sale:'Продажа', feed:'Выпойка молодняку', waste:'Брак / списание'};
 const UNITS = ['кг','т','ц','рулон','тюк','мешок','л','мл','шт','фл','уп','доза','амп'];
@@ -599,6 +602,7 @@ function quickCard(milkDay){
   ].filter(Boolean).join('');
   const mini = [
     canCreate('vet') && `<button data-vnew="ill">${hico('syringe')}Лечение</button><button data-vnew="vac">${hico('syringe')}Вакцинация</button><button data-vnew="vit">${hico('syringe')}Витамини&shy;зация</button><button data-vnew="treat">${hico('syringe')}Дегельмин&shy;тизация</button>`,
+    canCreate('manip') && `<button data-vnew="manip">${hico('syringe')}Манипуляция</button>`,
     canCreate('birth') && `<button data-act="q-birth">${ico('birth')}Окот</button>`,
     canCreate('milk') && `<button data-act="milkout">${ico('truck')}Отгрузка молока</button>`,
     canCreate('feed') && `<button data-act="q-feed">${ico('feed')}Приход корма</button>`,
@@ -687,7 +691,7 @@ function calendarBox(){
   let items;
   if(showDay){
     const fut = plan.filter(x => (x.date < t ? t : x.date) === showDay);
-    const past = S.events.filter(e => e.date === showDay && !['dose'].includes(e.type)).slice(0, 8).map(e => ({date:e.date, kind:'done', title:`${ET[e.type]?.t || 'Событие'}${e.scheme ? ' «' + e.scheme.name + '»' : e.drug ? ' · ' + e.drug : ''}`, sub:(e.animalIds || []).length === 1 ? animalLabel(byId(e.animalIds[0])) : heads((e.animalIds || []).length), attr:`data-evopen="${e.id}"`}));
+    const past = S.events.filter(e => e.date === showDay && !['dose'].includes(e.type)).slice(0, 8).map(e => ({date:e.date, kind:'done', title:`${evTitle(e)}${e.scheme ? ' «' + e.scheme.name + '»' : e.drug ? ' · ' + e.drug : ''}`, sub:(e.animalIds || []).length === 1 ? animalLabel(byId(e.animalIds[0])) : heads((e.animalIds || []).length), attr:`data-evopen="${e.id}"`}));
     items = fut.concat(past);
   } else items = plan.slice(0, 4);
   const kindIco = k => k === 'birth' ? hico('lamb') : k === 'stock' ? hico('feed') : k === 'done' ? hico('edit') : k === 'plan' ? hico('cal') : hico('syringe');
@@ -702,10 +706,10 @@ function recentRows(){
   return `<div class="rtable">` + evs.map(e => {
     const ids = e.animalIds || [], a = ids.length === 1 ? byId(ids[0]) : null;
     const when = e.created ? new Date(e.created) : null;
-    const desc = e.type === 'result' ? (e.schemeName || '') : e.scheme ? e.scheme.name : e.type === 'birth' ? `${e.count || 0} ${plural(+e.count || 0, 'детёныш', 'детёныша', 'детёнышей')}` : e.type === 'weight' ? `${num(e.weight)} кг` : [e.drug, e.dose, e.note].filter(Boolean).join(' · ');
+    const desc = e.type === 'result' ? (e.schemeName || '') : e.scheme ? e.scheme.name : e.type === 'birth' ? `${e.count || 0} ${plural(+e.count || 0, 'детёныш', 'детёныша', 'детёнышей')}` : e.type === 'weight' ? `${num(e.weight)} кг` : e.type === 'manip' ? [drugsText(e), e.note].filter(Boolean).join(' · ') : [e.drug, e.dose, e.note].filter(Boolean).join(' · ');
     return `<button class="rrow" data-evopen="${e.id}"><span class="rd">${fmtD(e.date)}${when ? ` <small>${pad(when.getHours())}:${pad(when.getMinutes())}</small>` : ''}</span>
       <span class="ra">${a ? `№ ${esc(a.tag)} <small>(${a.species === 'goat' ? 'коза' : 'овца'})</small>` : heads(ids.length)}</span>
-      <span class="rt"><i class="ev-${ET[e.type]?.vet ? 'vet' : e.type}"></i>${esc(ET[e.type]?.t || 'Событие')}</span><span class="rx">${esc(desc || '—')}</span></button>`;
+      <span class="rt"><i class="ev-${ET[e.type]?.vet ? 'vet' : e.type}"></i>${esc(evTitle(e))}</span><span class="rx">${esc(desc || '—')}</span></button>`;
   }).join('') + `</div>`;
 }
 function homeView(){
@@ -723,11 +727,6 @@ function homeView(){
     <div class="hero-b" role="img" aria-label="Берегиня — ваш надёжный помощник в управлении поголовьем МРС"><picture><source media="(min-width:700px)" srcset="icons/hero-wide.jpg"><img src="icons/hero-phone.jpg" alt=""></picture></div>
     <div class="kpis">${st('sheep', 'sheep', 'Овцы', 'k1')}${st('goat', 'goat', 'Козы', 'k2')}${st('young', 'lamb', 'Ягнята / Козлята', 'k3')}${st('all', 'herd', 'Всего голов', 'k4')}</div>
     ${nToday ? `<button class="banner as-btn todayb" data-nav="events" data-aghz2="today">${hico('cal')}<span>События сегодня: <b>${nToday}</b> — что сделать</span><span>›</span></button>` : ''}
-    <div class="duo"><div class="card chartcard"><div class="card-h"><h3>Динамика поголовья</h3><div class="legend"><span><i style="background:var(--sheep)"></i>Овцы</span><span><i style="background:var(--goat)"></i>Козы</span><span><i style="background:var(--young)"></i>Ягнята/Козлята</span></div></div>
-      <div class="chips">${[[8, '8 дней'], [30, 'Месяц'], [90, '3 месяца']].map(([d, l]) => `<button class="chip" data-chd="${d}" aria-pressed="${hz === d}">${l}</button>`).join('')}</div>${herdChart(hz)}</div>
-    <button class="card healthcard" ${canTab('vet') ? 'data-tab-go="vet"' : ''}><div class="card-h"><h3>Состояние здоровья</h3></div>
-      <div class="hbody"><div class="ringw">${ring(hi.pct)}<div class="ringt">${hico('heart')}<b>${hi.pct}%</b><small>в норме</small></div></div>
-      <div class="hlist"><span><i style="background:var(--good)"></i>Здоровые<b>${hi.ok}</b></span><span><i style="background:var(--warn)"></i>На лечении<b>${hi.treat}</b></span><span><i style="background:var(--bad)"></i>Под наблюдением<b>${hi.watch}</b></span></div></div></button></div>
     <div class="card recentcard"><div class="card-h"><h3>Последние записи</h3><button class="link" data-nav="events" data-aghz2="week">Все события ›</button></div>${recentRows()}</div>
     </div><div class="dr">
     ${calendarBox()}
@@ -925,10 +924,10 @@ const VET_TYPES = new Set(['ill', 'vac', 'treat', 'vit', 'dose', 'result']);
 const ALL_TABS = ['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'plan', 'money', 'stats', 'feedsheet', 'yplan', 'genetics', 'daily'];
 const ROLE = {
   admin:   {create:'*', edit:'*', manage:'*', tabs:[...ALL_TABS, 'log', 'people'], stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
-  manager: {create:['herd', 'birth', 'milk', 'feed', 'fuel', 'fin', 'plan'], edit:['herd', 'birth', 'milk', 'feed', 'fuel', 'fin', 'plan'], manage:['herd', 'feed', 'fuel', 'plan'],
+  manager: {create:['herd', 'birth', 'manip', 'milk', 'feed', 'fuel', 'fin', 'plan'], edit:['herd', 'birth', 'manip', 'milk', 'feed', 'fuel', 'fin', 'plan'], manage:['herd', 'feed', 'fuel', 'plan'],
             tabs:[...ALL_TABS.filter(t => t !== 'vet'), 'log'], stock:['feed', 'fuel', 'tech'], xl:['herd', 'births', 'pens', 'feed', 'fuel', 'tech', 'milk', 'milkHeads', 'milkOut', 'finance']},
-  foreman: {create:['herd', 'birth', 'vet', 'milk', 'feed', 'fuel', 'fin', 'plan'], edit:[], manage:[], tabs:ALL_TABS, stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
-  vet:     {create:['vet', 'birth', 'milk', 'plan'], edit:['vet', 'milk'], manage:['vet'], tabs:['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'daily', 'yplan', 'plan'], stock:['vet'],
+  foreman: {create:['herd', 'birth', 'vet', 'manip', 'milk', 'feed', 'fuel', 'fin', 'plan'], edit:[], manage:[], tabs:ALL_TABS, stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
+  vet:     {create:['vet', 'birth', 'manip', 'milk', 'plan'], edit:['vet', 'manip', 'milk'], manage:['vet'], tabs:['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'daily', 'yplan', 'plan'], stock:['vet'],
             xl:['herd', 'births', 'events', 'milk', 'milkHeads', 'milkOut', 'vet']},
   feeder:  {create:['feed', 'plan'], edit:['feed'], manage:['feed'], tabs:['home', 'herd', 'pens', 'stock', 'feedsheet', 'more'], stock:['feed'], xl:['feed', 'pens']},
   mechanic:{create:['fuel', 'plan'], edit:['fuel'], manage:['fuel'], tabs:['home', 'stock', 'more'], stock:['fuel', 'tech'], xl:['fuel', 'tech']},
@@ -952,7 +951,7 @@ const seeWho = () => ['admin', 'manager'].includes(roleOf());
 const isViewer = () => roleOf() === 'viewer';
 const isFeeder = () => roleOf() === 'feeder';
 const isMech = () => roleOf() === 'mechanic';
-const evDomain = t => VET_TYPES.has(t) ? 'vet' : (t === 'birth' || t === 'weight' || t === 'mating') ? 'birth' : t === 'task' ? 'plan' : 'herd';
+const evDomain = t => VET_TYPES.has(t) ? 'vet' : (t === 'manip' || t === 'shear') ? 'manip' : (t === 'birth' || t === 'weight' || t === 'mating') ? 'birth' : t === 'task' ? 'plan' : 'herd';
 const catDomain = c => c === 'vehicle' || c === 'tech' ? 'fuel' : c;
 const roToast = () => toast('Нет прав на это действие.');
 function applyRole(){
@@ -1097,6 +1096,7 @@ function moveRow(m){
 function moreView(){
   const row = (go, t, sub, attr) => `<button class="row" ${attr || `data-tab-go="${go}"`} style="grid-template-columns:1fr auto"><span class="main"><div class="name">${t}</div><div class="sub">${sub}</div></span><span class="side">›</span></button>`;
   const rows = [
+    S.admin && row('people', 'Пользователи и роли', 'Имена, роли и права доступа'),
     canTab('daily') && row('daily', 'Отчёт за текущий день', 'Поголовье по группам, молоко и средний удой, остатки кормов'),
     canTab('events') && row('events', 'События', 'Что сделать сегодня и что впереди: уколы, ревакцинации, окоты'),
     canTab('vet') && row('vet', 'Ветеринария', 'Лечение по схемам, вакцинация, дегельминтизация'),
@@ -1107,7 +1107,6 @@ function moreView(){
     canTab('money') && row('money', 'Финансы', 'Доходы и расходы по месяцам'),
     canTab('stats') && row('stats', 'Сводка', 'Поголовье, приплод, молоко, деньги за год'),
     row('', 'Выгрузка в Excel', 'Данные по вашим разделам за выбранный период', 'data-act="excel"'),
-    S.admin && row('people', 'Пользователи и роли', 'Имена, роли и права доступа'),
     seeWho() && row('log', 'Журнал изменений', 'Кто, когда и что внёс, изменил или удалил'),
     S.admin && row('', 'Загрузка из Excel', 'Список животных, журнал молока, склад кормов, аптека', 'data-act="import"')
   ].filter(Boolean).join('');
@@ -1339,6 +1338,7 @@ function askConfirm(holder, text, onYes, yesLabel){
 }
 
 /* ===== Ветеринария: схемы, курсы по дням, результат ===== */
+const REP_T = {vac:'Ревакцинация', deworm:'Повторная дегельминтизация', vit:'Повторная витаминизация'};
 const SCHEME_KIND = {ill:'Лечение', vac:'Вакцинация', deworm:'Дегельминтизация', vit:'Витаминизация'};
 const KIND_OF_TYPE = {ill:'ill', vac:'vac', treat:'deworm', vit:'vit'};
 const TYPE_OF_KIND = {ill:'ill', vac:'vac', deworm:'treat', vit:'vit'};
@@ -1411,7 +1411,7 @@ function vetView(){
     h += `<div class="chips" style="flex-wrap:wrap">${Object.entries(SCHEME_KIND).map(([kk, l]) => `<button class="chip" data-vkind="${kk}" aria-pressed="${k === kk}">${l}</button>`).join('')}</div>
       <div class="actions"><button class="btn primary m-vet" data-act="add-scheme">+ Новая схема</button></div>`;
     h += list.length ? `<div class="list">${list.map(sc => `<button class="row" data-scheme="${sc.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(sc.name)}</div>
-        ${(sc.steps || []).map(st => `<div class="sub">${esc(stepText(st))}</div>`).join('')}${sc.kind === 'ill' ? `<div class="sub">результат — на ${schemeCheckDay(sc)}-й день</div>` : sc.repeat ? `<div class="sub">повтор через ${sc.repeat} ${plural(+sc.repeat, 'день', 'дня', 'дней')}${+sc.repeatTimes > 1 ? `, ${sc.repeatTimes} раза` : ''}</div>` : ''}</span><span class="side">›</span></button>`).join('')}</div>`
+        ${(sc.steps || []).map(st => `<div class="sub">${esc(stepText(st))}</div>`).join('')}${sc.kind === 'ill' ? `<div class="sub">результат — на ${schemeCheckDay(sc)}-й день</div>` : sc.repeat ? `<div class="sub">${REP_T[sc.kind] || 'Повтор'} через ${sc.repeat} ${plural(+sc.repeat, 'день', 'дня', 'дней')}${+sc.repeatTimes > 1 ? `, ${sc.repeatTimes} раза` : ''}</div>` : ''}</span><span class="side">›</span></button>`).join('')}</div>`
       : `<div class="empty"><p>Схем «${SCHEME_KIND[k]}» пока нет.</p>${k === 'ill' ? `<p class="muted">Например: «1 Понос молодняк» — Кетопрофен 0,5 мл в/м 3 дня + Цефтонит форте 1,0 мл п/к 1 день, результат на 4-й день.</p><div class="actions"><button class="btn m-vet" data-act="seed-scheme">Добавить этот пример</button></div>` : ''}</div>`;
     h += `<p class="muted" style="margin:0">Дозировку и особенности каждого препарата впишите в «Склад → Аптека» — они подставляются в схему и видны при процедуре.</p>`;
   }
@@ -1442,7 +1442,10 @@ function schemeForm(sc, kind0){
     <div id="sc-steps">${v.steps.map(stepRow).join('')}</div>
     <button type="button" class="link" id="sc-add" style="align-self:flex-start">+ Добавить препарат</button>
     <div id="sc-ill">${fld('sc-check', 'Оценить результат на день', `<input id="sc-check" type="number" min="1" step="1" inputmode="numeric" value="${esc(v.checkDay)}" placeholder="по умолчанию — день после последнего укола">`)}</div>
-    <div id="sc-rep" class="two">${fld('sc-repeat', 'Повторить через, дней', `<input id="sc-repeat" type="number" min="1" step="1" inputmode="numeric" value="${esc(v.repeat)}" placeholder="напр. 21">`)}${fld('sc-rtimes', 'Сколько раз повторить', `<input id="sc-rtimes" type="number" min="1" step="1" inputmode="numeric" value="${esc(v.repeatTimes || 1)}">`)}</div>
+    <div id="sc-rep" class="panel"><div class="eyebrow" id="sc-rept">Ревакцинация</div>
+      <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="sc-ron" ${v.repeat || (!isEdit && v.kind === 'vac') ? 'checked' : ''}><span id="sc-ronl">Нужна ревакцинация</span></label>
+      <div id="sc-rbox" class="two">${fld('sc-repeat', 'Через сколько дней', `<input id="sc-repeat" type="number" min="1" step="1" inputmode="numeric" value="${esc(v.repeat)}" placeholder="напр. 21">`)}${fld('sc-rtimes', 'Сколько раз', `<input id="sc-rtimes" type="number" min="1" step="1" inputmode="numeric" value="${esc(v.repeatTimes || 1)}">`)}</div>
+      <p class="muted" id="sc-rhint" style="margin:0"></p></div>
     ${fld('sc-note', 'Заметка', `<textarea id="sc-note">${esc(v.note)}</textarea>`)}
     <p class="muted" id="sc-sum" style="margin:0"></p>
     <p class="err" id="scerr" hidden></p>
@@ -1454,6 +1457,9 @@ function schemeForm(sc, kind0){
     const read = () => [...box.querySelectorAll('.step')].map(el => { const g = k => el.querySelector(`[data-k=${k}]`).value.trim(); return {item:g('item'), name:g('name'), dose:g('dose'), route:g('route'), from:Math.max(1, parseInt(g('from')) || 1), days:Math.max(1, parseInt(g('days')) || 1)}; });
     const sync = () => {
       const k = s.querySelector('#sc-kind').value; s.querySelector('#sc-ill').hidden = k !== 'ill'; s.querySelector('#sc-rep').hidden = k === 'ill';
+      const rt = REP_T[k] || 'Повтор', ron = s.querySelector('#sc-ron').checked, rd = parseInt(s.querySelector('#sc-repeat').value) || 0;
+      s.querySelector('#sc-rept').textContent = rt; s.querySelector('#sc-ronl').textContent = 'Нужна ' + rt.toLowerCase(); s.querySelector('#sc-rbox').hidden = !ron;
+      s.querySelector('#sc-rhint').textContent = ron ? `Через ${rd || 'N'} ${plural(rd || 5, 'день', 'дня', 'дней')} после обработки тем же животным, кому её сделали, автоматически придёт «${rt}» — в «Событиях», на главной и в календаре. Нажмите «Сделать» — откроется запись уже с этими животными.` : '';
       const st = read().filter(x => x.name), tmp = {kind:k, steps:st, checkDay:parseInt(s.querySelector('#sc-check').value) || ''};
       s.querySelector('#sc-sum').textContent = st.length ? `Курс ${schemeLastDay(tmp)} ${plural(schemeLastDay(tmp), 'день', 'дня', 'дней')}${k === 'ill' ? `, результат на ${schemeCheckDay(tmp)}-й день` : ''}.` : '';
     };
@@ -1473,9 +1479,10 @@ function schemeForm(sc, kind0){
       const err = s.querySelector('#scerr'), name = s.querySelector('#sc-name').value.trim(), steps = read().filter(x => x.name || x.item).map(x => ({...x, name: x.name || itemById(x.item)?.name || ''}));
       if(!name){ err.hidden = false; err.textContent = 'Укажите название схемы.'; return; }
       if(!steps.length){ err.hidden = false; err.textContent = 'Добавьте хотя бы один препарат.'; return; }
-      const kind = s.querySelector('#sc-kind').value;
+      const kind = s.querySelector('#sc-kind').value, ron = s.querySelector('#sc-ron').checked;
+      if(kind !== 'ill' && ron && !(parseInt(s.querySelector('#sc-repeat').value) > 0)){ err.hidden = false; err.textContent = 'Укажите, через сколько дней ' + (REP_T[kind] || 'повтор').toLowerCase() + '.'; return; }
       const data = {id: v.id || 's' + Date.now().toString(36), kind, name, steps, note:s.querySelector('#sc-note').value.trim(),
-        checkDay: kind === 'ill' ? (parseInt(s.querySelector('#sc-check').value) || '') : '', repeat: kind !== 'ill' ? (parseInt(s.querySelector('#sc-repeat').value) || '') : '', repeatTimes: kind !== 'ill' ? Math.max(1, parseInt(s.querySelector('#sc-rtimes').value) || 1) : ''};
+        checkDay: kind === 'ill' ? (parseInt(s.querySelector('#sc-check').value) || '') : '', repeat: kind !== 'ill' && ron ? (parseInt(s.querySelector('#sc-repeat').value) || '') : '', repeatTimes: kind !== 'ill' && ron ? Math.max(1, parseInt(s.querySelector('#sc-rtimes').value) || 1) : ''};
       const list = schemes().filter(x => x.id !== data.id).concat([data]);
       saveSchemes(list); S.vetKind = kind; toast('Схема сохранена'); closeSheet();
     };
@@ -1567,7 +1574,7 @@ function courseSheet(evId){
 }
 
 /* ===== События: что сделать сегодня и что впереди ===== */
-const repeatTitle = e => e.scheme ? `${e.type === 'vac' ? 'Ревакцинация' : 'Повтор: ' + (ET[e.type]?.t || '').toLowerCase()} «${e.scheme.name}»` : `${ET[e.type]?.t || 'Обработка'}${e.drug ? ' · ' + e.drug : ''} — повтор`;
+const repeatTitle = e => e.scheme ? `${REP_T[KIND_OF_TYPE[e.type]] || 'Повтор'} «${e.scheme.name}»` : `${ET[e.type]?.t || 'Обработка'}${e.drug ? ' · ' + e.drug : ''} — повтор`;
 function agendaItems(to){
   const t = today(), out = [];
   activeCourses().forEach(c => {
@@ -1983,7 +1990,7 @@ function animalCard(id){
     <div style="display:flex;align-items:center;gap:14px"><span class="tag big">${esc(a.tag)}</span>
       <div style="min-width:0"><div class="title-lg">${esc(animalTitle(a))} ${sexIcon(a.sex)}</div>
       <div class="muted">${a.status==='active' ? `<span class="pill ok">В стаде</span>` : `<span class="pill">${STATUS[a.status]}${a.outDate?' · '+fmtD(a.outDate):''}</span>`}</div></div></div>
-    <div class="evbtns">${a.status==='active' ? `${a.sex==='f' && canCreate('birth') ? `<button class="btn ${planItems().some(i => i.kind==='birth' && i.animal.id===id) ? 'primary' : ''}" data-cev="birth">Окот</button>` : ''}${canCreate('vet') ? `<button class="btn" data-cev="ill">Лечение</button><button class="btn" data-cev="vac">Вакцинация</button><button class="btn" data-cev="treat">Дегельминтизация</button><button class="btn" data-cev="vit">Витаминизация</button>` : ''}${canCreate('herd') || canCreate('birth') ? `<button class="btn" data-cev="">Другое…</button>` : ''}` : ''}${canEdit('herd') ? '<button class="btn" id="edit">Изменить</button>' : ''}</div>
+    <div class="evbtns">${a.status==='active' && evChoices(a).length ? `<button class="btn primary" id="evadd">+ Добавить событие</button>` : ''}${canEdit('herd') ? '<button class="btn" id="edit">Изменить</button>' : ''}</div>
     ${(() => { const cs = activeCourses().filter(c => c.animals.includes(id)); return cs.length ? `<div class="panel"><div class="eyebrow">Сейчас</div>${cs.map(c => `<button class="row" data-course="${c.e.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(c.sc.name)}</div><div class="sub">${SCHEME_KIND[c.sc.kind]} · день ${Math.min(c.dayNow, c.check || c.last)} из ${c.check || c.last}${c.pending.length ? ' · сегодня: ' + esc(c.pending.at(-1).steps.map(stepShort).join(' + ')) : c.needResult ? ' · пора оценить результат' : ''}</div></span><span class="side">›</span></button>`).join('')}</div>` : ''; })()}
     <dl class="facts">
       <div><dt>Загон</dt><dd>${a.pen && PEN[a.pen] ? `<button class="link" data-pen-go="${a.pen}">${esc(penLong(a.pen))}</button>${a.since ? `<span class="muted" style="display:block">с ${fmtD(a.since)}</span>` : ''}` : '—'}</dd></div>
@@ -2010,7 +2017,7 @@ function animalCard(id){
     s.querySelectorAll('[data-pen-go]').forEach(b => b.onclick = () => penSheet(b.dataset.penGo));
     s.querySelectorAll('[data-ev]').forEach(b => b.onclick = () => { const e = S.events.find(x => x.id===b.dataset.ev); if(!e) return; if(e.course) courseSheet(e.course); else if(e.scheme) courseSheet(e.id); else eventForm(e); });
     s.querySelectorAll('[data-course]').forEach(b => b.onclick = () => courseSheet(b.dataset.course));
-    s.querySelectorAll('[data-cev]').forEach(b => b.onclick = () => eventForm({animalIds:[id], type: b.dataset.cev || 'weight'}));
+    const ea = s.querySelector('#evadd'); if(ea) ea.onclick = () => evPick(id);
     const ed = s.querySelector('#edit'); if(ed) ed.onclick = () => animalForm(a);
   }, 'card:'+id);
 }
@@ -2022,6 +2029,7 @@ function evRow(e, aid){
     return `<button class="ev" data-ev="${e.id}"><span class="d">${fmtD(e.date)}</span><span><div class="t">Результат лечения</div><div class="s">${esc(bits.filter(Boolean).join(' · '))}</div>${byLine(e.byEmail, 'записал(а)') ? `<span class="by">${esc(byLine(e.byEmail, 'записал(а)'))}</span>` : ''}</span></button>`; }
   if(e.type==='task' && e.title) bits.push(e.title);
   if(e.scheme){ bits.push(`по схеме «${e.scheme.name}»`); (e.scheme.steps||[]).forEach(st => bits.push(stepText(st))); }
+  if(e.type==='manip' && drugsText(e)) bits.push(drugsText(e));
   if(e.drug && !e.scheme) bits.push(e.drug);
   if(e.dose) bits.push(e.dose);
   if(e.type==='weight' && e.weight) bits.push(`${num(e.weight)} кг`);
@@ -2031,7 +2039,7 @@ function evRow(e, aid){
   if((e.animalIds||[]).length>1) bits.push(`группа ${e.animalIds.length} гол.`);
   if(e.note) bits.push(e.note);
   return `<button class="ev" data-ev="${e.id}"><span class="d">${fmtD(e.date)}</span>
-    <span><div class="t">${ET[e.type]?.t || 'Событие'}</div>${bits.length?`<div class="s">${esc(bits.join(' · '))}</div>`:''}${byLine(e.byEmail, 'записал(а)') ? `<span class="by">${esc(byLine(e.byEmail, 'записал(а)'))}</span>` : ''}</span></button>`;
+    <span><div class="t">${esc(evTitle(e))}</div>${bits.length?`<div class="s">${esc(bits.join(' · '))}</div>`:''}${byLine(e.byEmail, 'записал(а)') ? `<span class="by">${esc(byLine(e.byEmail, 'записал(а)'))}</span>` : ''}</span></button>`;
 }
 function spark(ws){
   const W=300, H=56, P=6, vals = ws.map(w => +w.weight), mn = Math.min(...vals), mx = Math.max(...vals), r = mx-mn || 1;
@@ -2114,6 +2122,20 @@ function animalForm(a, pre){
 }
 
 /* ----- Форма события (в т.ч. окот с ягнятами) ----- */
+// Выбор события для одного животного (из карточки)
+function evChoices(a){
+  const order = [['birth', 'Окот'], ['ill', 'Лечение'], ['vac', 'Вакцинация'], ['treat', 'Дегельминтизация'], ['vit', 'Витаминизация'], ['manip', 'Манипуляция'], ['weight', 'Взвешивание'], ['mating', 'Случка'], ['other', 'Другое']];
+  return order.filter(([k]) => canCreate(evDomain(k)) && !(k === 'birth' && a.sex !== 'f'));
+}
+function evPick(id){
+  const a = byId(id); if(!a) return;
+  const sub = {birth:'Дата, приплод, карточки детёнышей', ill:'По схеме лечения или вручную', vac:'Схема, ревакцинация — тем же животным', treat:'Схема, повторная обработка', vit:'Схема или препарат вручную', manip:Object.values(MANIP).join(', '), weight:'Вес, кг', mating:'С каким производителем', other:'Любая заметка'};
+  const body = `<div class="panel"><div class="name">№ ${esc(a.tag)} · ${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'}${a.pen ? ' · ' + esc(penShort(a.pen)) : ''}</div></div>
+    <div class="list">${evChoices(a).map(([k, l]) => `<button class="row" data-pk="${k}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${l}</div><div class="sub">${esc(sub[k] || '')}</div></span><span class="side">›</span></button>`).join('')}</div>`;
+  openSheet('Добавить событие', body, s => {
+    s.querySelectorAll('[data-pk]').forEach(b => b.onclick = () => eventForm({animalIds:[id], type:b.dataset.pk, fixed:true}));
+  }, 'evpick');
+}
 function eventForm(e){
   const isEdit = !!e.id;
   const v = {type:'vac', date:today(), animalIds:[], ...e};
@@ -2126,19 +2148,21 @@ function eventForm(e){
   const body = `<form id="ef" novalidate>
     ${fld('e-type','Тип события',`<select id="e-type" name="type" ${isEdit && v.scheme ? 'disabled' : ''}>${Object.entries(ET).filter(([k,o]) => !o.hide || k===v.type).filter(([k]) => isEdit || isViewer() || canCreate(evDomain(k))).map(([k,o]) => opt(k,o.t,v.type)).join('')}</select>`)}
     ${isEdit && v.scheme ? `<input type="hidden" name="type" value="${esc(v.type)}">` : ''}
-    <div class="field"><label>Животные · <span id="ecount"></span></label>
+    ${v.fixed && v.animalIds.length === 1 && byId(v.animalIds[0]) ? (() => { const fa = byId(v.animalIds[0]); return `<div class="panel"><div class="eyebrow">Животное</div><div class="name">№ ${esc(fa.tag)} · ${esc(animalTitle(fa))} ${fa.sex==='f'?'♀':'♂'}${fa.pen ? ' · ' + esc(penShort(fa.pen)) : ''}</div><input type="checkbox" name="aid" value="${fa.id}" checked hidden><span id="ecount" hidden></span><div id="e-picked" hidden></div></div>`; })() : `<div class="field"><label>Животные · <span id="ecount"></span></label>
       <div class="chips" style="flex-wrap:wrap"><button type="button" class="chip" data-pick="all">Всё стадо</button><button type="button" class="chip" data-pick="f">Все самки</button>${barnsHere.map(b => `<button type="button" class="chip" data-pick="b:${b.id}">${b.name}</button>`).join('')}<button type="button" class="chip" data-pick="none">Снять</button></div>
       <select id="e-penpick" aria-label="Отметить загон">${penOptions('', 'Отметить весь загон…')}</select>
       <div class="search"><input id="e-find" type="search" placeholder="Найти по номеру бирки, кличке, загону" autocomplete="off" enterkeyhint="done"></div>
       <div id="e-picked" class="picked"></div>
-      <div class="list scroll" id="e-alist">${act.map(a => `<label class="row pickrow" data-s="${esc(norm([a.tag, a.name, a.breed, animalTitle(a), penShort(a.pen), penLabel(a.pen)].filter(Boolean).join(' ')))}" data-t="${esc(norm(a.tag))}"><input type="checkbox" name="aid" value="${a.id}" ${chosen.has(a.id)?'checked':''}><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'}${a.pen?' · '+esc(penShort(a.pen)):''}</span></label>`).join('') || '<p class="sub" style="padding:12px;margin:0">В стаде пока нет животных.</p>'}</div></div>
+      <div class="list scroll" id="e-alist">${act.map(a => `<label class="row pickrow" data-s="${esc(norm([a.tag, a.name, a.breed, animalTitle(a), penShort(a.pen), penLabel(a.pen)].filter(Boolean).join(' ')))}" data-t="${esc(norm(a.tag))}"><input type="checkbox" name="aid" value="${a.id}" ${chosen.has(a.id)?'checked':''}><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'}${a.pen?' · '+esc(penShort(a.pen)):''}</span></label>`).join('') || '<p class="sub" style="padding:12px;margin:0">В стаде пока нет животных.</p>'}</div></div>`}
     ${fld('e-date','Дата',`<input id="e-date" type="date" name="date" value="${esc(v.date)}" max="${addDays(today(),1)}" required>`)}
     <div data-for="vet">${isEdit ? (v.scheme ? `<div class="panel"><div class="eyebrow">Схема: ${esc(v.scheme.name)}</div>${(v.scheme.steps||[]).map(st => `<div class="sub">${esc(stepText(st))}</div>`).join('')}</div>` : '')
       : `${fld('e-scheme','Схема',`<select id="e-scheme" name="schemeId"></select>`)}<div id="e-sinfo"></div>
       <label class="row pickrow" id="e-day1w" style="grid-template-columns:auto 1fr"><input type="checkbox" id="e-day1" checked><span>Процедуры 1-го дня уже сделаны — отметить сразу</span></label>`}</div>
     <div data-for="vet" class="two manual">${fld('e-drug','Препарат',`<input id="e-drug" name="drug" value="${esc(v.drug)}" list="drugs">`)}${fld('e-dose','Доза',`<input id="e-dose" name="dose" value="${esc(v.dose)}" placeholder="напр. 1 мл/10 кг">`)}</div>
     <datalist id="drugs">${[...new Set(S.events.map(x => x.drug).filter(Boolean))].map(d => `<option value="${esc(d)}">`).join('')}</datalist>
-    <div data-for="vet" class="manual">${fld('e-next','Следующая обработка (напоминание)',`<input id="e-next" type="date" name="nextDate" value="${esc(v.nextDate)}">`)}</div>
+    <div data-for="vet" class="manual">${fld('e-next','Ревакцинация / повторная обработка — дата (придёт напоминание)',`<input id="e-next" type="date" name="nextDate" value="${esc(v.nextDate)}">`)}</div>
+    <div data-for="manip">${fld('e-manip','Что сделали',`<select id="e-manip" name="manip">${Object.entries(MANIP).map(([k,l]) => opt(k,l,v.manip||'dehorn')).join('')}</select>`)}
+      <div id="e-surg"><div class="eyebrow" style="margin-top:6px">Препараты</div><div id="e-drugs"></div><button type="button" class="link" id="e-dadd" style="align-self:flex-start">+ Добавить препарат</button></div></div>
     <div data-for="weight">${fld('e-w','Вес, кг',`<input id="e-w" name="weight" inputmode="decimal" value="${esc(v.weight)}" autocomplete="off">`)}</div>
     <div data-for="mating">${fld('e-sire','Производитель',`<select id="e-sire" name="sireId">${opt('','— не указан —',v.sireId||'')}${males.map(m => opt(m.id, animalLabel(m), v.sireId)).join('')}</select>`)}<p class="muted" style="margin:4px 0 0">Дата окота появится в «Плане».</p></div>
     <div data-for="birth" class="birth">
@@ -2146,7 +2170,7 @@ function eventForm(e){
         ${fld('e-ksire','Отец',`<select id="e-ksire" name="kidSire">${opt('','— не указан —','')}${males.map(m => opt(m.id, animalLabel(m), v.sireId)).join('')}</select>`)}</div>
       <div id="kids"></div>
     </div>
-    ${fld('e-note','Заметка',`<textarea id="e-note" name="note">${esc(v.note)}</textarea>`)}
+    ${fld('e-note','<span id="e-notel">Заметка</span>',`<textarea id="e-note" name="note">${esc(v.note)}</textarea>`)}
     <p class="err" id="eerr" hidden></p>
     <div class="actions"><button class="btn primary" type="submit">${isEdit?'Сохранить':'Записать'}</button></div>
     ${isEdit ? `<div class="actions"><button class="btn danger" type="button" id="edel">Удалить запись</button></div><div id="edelc"></div>` : ''}
@@ -2156,7 +2180,15 @@ function eventForm(e){
     const boxes = () => [...f.querySelectorAll('input[name=aid]')];
     const checked = () => boxes().filter(c => c.checked).map(c => c.value);
     const scSel = s.querySelector('#e-scheme');
-    const showFor = () => { const vet = ET[t.value].vet; s.querySelectorAll('[data-for]').forEach(el => el.hidden = !(el.dataset.for===t.value || (el.dataset.for==='vet' && vet)));
+    const mSel = s.querySelector('#e-manip'), dBox = s.querySelector('#e-drugs'), vdrugs = itemsOf('vet');
+    const dRow = (d = {}) => `<div class="two drow" style="grid-template-columns:2fr 1fr 1fr auto;align-items:end">${fld('', 'Препарат', `<input data-k="name" list="vdl" value="${esc(d.name || '')}" placeholder="из аптеки или вписать" autocomplete="off">`)}${fld('', 'Доза', `<input data-k="dose" value="${esc(d.dose || '')}" placeholder="2 мл" autocomplete="off">`)}${fld('', 'Как', `<select data-k="route">${opt('', '—', d.route || '')}${ROUTES.map(r => opt(r, r, d.route)).join('')}</select>`)}<button type="button" class="link" data-drm>×</button></div>`;
+    const bindD = () => dBox.querySelectorAll('[data-drm]').forEach(b => b.onclick = () => { b.closest('.drow').remove(); });
+    dBox.innerHTML = (v.drugs && v.drugs.length ? v.drugs : [{}]).map(dRow).join('') + `<datalist id="vdl">${vdrugs.map(d => `<option value="${esc(d.name)}">`).join('')}</datalist>`; bindD();
+    s.querySelector('#e-dadd').onclick = () => { dBox.querySelector('datalist').insertAdjacentHTML('beforebegin', dRow()); bindD(); };
+    const readDrugs = () => [...dBox.querySelectorAll('.drow')].map(r => { const g = k => r.querySelector(`[data-k=${k}]`).value.trim(); const name = g('name'), it = vdrugs.find(x => x.name === name); return {name, item:it?.id || '', dose:g('dose'), route:g('route')}; }).filter(x => x.name);
+    const showSurg = () => { const surg = t.value === 'manip' && mSel.value === 'surgery'; s.querySelector('#e-surg').hidden = !surg; s.querySelector('#e-notel').textContent = surg ? 'Комментарий — что делали' : 'Заметка'; };
+    mSel.onchange = showSurg;
+    const showFor = () => { showSurg(); const vet = ET[t.value].vet; s.querySelectorAll('[data-for]').forEach(el => el.hidden = !(el.dataset.for===t.value || (el.dataset.for==='vet' && vet)));
       if(vet && isEdit && v.scheme) s.querySelectorAll('.manual').forEach(el => el.hidden = true);
       if(vet && scSel){
         const k = KIND_OF_TYPE[t.value], list = schemes().filter(x => x.kind===k);
@@ -2166,7 +2198,7 @@ function eventForm(e){
         const sc = schemeById(scSel.value) || (v.schemeSnap?.id===scSel.value ? v.schemeSnap : null);
         s.querySelectorAll('.manual').forEach(el => el.hidden = !!sc);
         s.querySelector('#e-day1w').hidden = !sc;
-        s.querySelector('#e-sinfo').innerHTML = sc ? `<div class="panel">${(sc.steps||[]).map(st => `<div class="sub">${esc(stepText(st))}</div>`).join('')}${sc.kind==='ill' ? `<div class="sub">результат — на ${schemeCheckDay(sc)}-й день</div>` : sc.repeat ? `<div class="sub">повтор через ${sc.repeat} дн. — появится в «Плане»</div>` : ''}</div>` : '';
+        s.querySelector('#e-sinfo').innerHTML = sc ? `<div class="panel">${(sc.steps||[]).map(st => `<div class="sub">${esc(stepText(st))}</div>`).join('')}${sc.kind==='ill' ? `<div class="sub">результат — на ${schemeCheckDay(sc)}-й день</div>` : sc.repeat ? `<div class="sub">${REP_T[sc.kind] || 'Повтор'} через ${sc.repeat} дн. тем же животным — придёт в «События»</div>` : ''}</div>` : '';
       } };
     if(scSel) scSel.onchange = showFor;
     const count = () => { const ids = checked(), n = ids.length; s.querySelector('#ecount').textContent = n ? `выбрано ${n}` : 'не выбраны';
@@ -2209,7 +2241,7 @@ function eventForm(e){
       count(); updateKids();
     });
     const pp = s.querySelector('#e-penpick');
-    pp.onchange = () => { if(!pp.value) return; boxes().forEach(c => { if(byId(c.value).pen===pp.value) c.checked = true; }); pp.value = ''; count(); updateKids(); };
+    if(pp) pp.onchange = () => { if(!pp.value) return; boxes().forEach(c => { if(byId(c.value).pen===pp.value) c.checked = true; }); pp.value = ''; count(); updateKids(); };
     f.onsubmit = ev => {
       ev.preventDefault();
       const fd = new FormData(f), ids = fd.getAll('aid'), err = s.querySelector('#eerr');
@@ -2225,6 +2257,7 @@ function eventForm(e){
       else if(ET[type].vet){ data.drug = fd.get('drug')||''; data.dose = fd.get('dose')||''; if(fd.get('nextDate')) data.nextDate = fd.get('nextDate'); }
       if(type==='weight'){ const w = dec(fd.get('weight')); if(!(w > 0)){ err.hidden = false; err.textContent = 'Укажите вес.'; return; } data.weight = round(w,1); }
       if(type==='mating' && fd.get('sireId')) data.sireId = fd.get('sireId');
+      if(type==='manip'){ data.manip = fd.get('manip') || 'dehorn'; if(data.manip==='surgery'){ data.drugs = readDrugs(); if(!data.drugs.length && !data.note){ err.hidden = false; err.textContent = 'Для операции укажите препараты или опишите в комментарии, что делали.'; return; } } }
       if(type==='birth'){ data.count = parseInt(fd.get('count')) || 0; if(fd.get('kidSire')) data.sireId = fd.get('kidSire'); }
       if(isEdit && e.doneNext && data.nextDate===e.nextDate) data.doneNext = true;
       if(isEdit){ data.by = e.by||null; data.byEmail = e.byEmail||null; data.created = e.created||null; store.set('events', e.id, data); }
@@ -2967,7 +3000,7 @@ function xlSheets(from, to, secs){
   if(secs.events){
     const rows = S.events.filter(e => e.type !== 'birth' && inP(e.date)).sort((a, b) => a.date.localeCompare(b.date)).map(e => {
       const ids = e.animalIds || [];
-      return [e.date, ET[e.type]?.t || 'Событие', e.drug || '', e.dose || '', ids.length, ids.map(tagOf).filter(Boolean).join(', '),
+      return [e.date, evTitle(e), e.type === 'manip' ? drugsText(e) : (e.drug || ''), e.dose || '', ids.length, ids.map(tagOf).filter(Boolean).join(', '),
         e.type === 'weight' ? +e.weight : '', e.type === 'mating' ? tagOf(e.sireId) : '', e.nextDate || '', e.nextDate ? (e.doneNext ? 'да' : 'нет') : '', e.note || '', seeWho() && e.byEmail ? whoName(e.byEmail) : ''];
     });
     out.push({name:'Ветеринария и события', title:'Ветеринария и события', note:period,
