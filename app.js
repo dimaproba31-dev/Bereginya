@@ -157,7 +157,7 @@ function firebaseBackend(fs, db){
     newId(col){ return fs.doc(fs.collection(db, col)).id; },
     write(col, id, data, merge){ return merge ? fs.setDoc(fs.doc(db, col, id), conv(data), {merge:true}) : fs.setDoc(fs.doc(db, col, id), data); },
     remove(col, id){ return fs.deleteDoc(fs.doc(db, col, id)); },
-    watchDoc(col, id, next, fail){ return fs.onSnapshot(fs.doc(db, col, id), snap => next(snap.exists() ? {id:snap.id, ...snap.data()} : null), fail); },
+    watchDoc(col, id, next, fail){ return fs.onSnapshot(fs.doc(db, col, id), snap => next(snap.exists() ? {id:snap.id, ...snap.data()} : null, snap.metadata.fromCache), fail); },
     recent(col, n, next, fail){
       return fs.onSnapshot(fs.query(fs.collection(db, col), fs.orderBy('at', 'desc'), fs.limit(n)),
         snap => next(snap.docs.map(d => ({id:d.id, ...d.data()}))), fail);
@@ -288,24 +288,39 @@ async function boot(){
     const auth = au.getAuth(fapp);
     fb = {db, auth, fs, au};
     au.onAuthStateChanged(auth, user => {
-      if(!user){ detach(); S.uid=null; S.email=null; closeSheet(); setMode('login'); return; }
-      S.uid = user.uid; S.email = user.email; S.owner = false; S.userRole = ''; S.admin = false; document.body.classList.add('worker');
-      isAdminEmail(user.email).then(ok => { S.owner = ok; applyRole(); render(); scheduleFeed(); scheduleGroups(); });
-      const be = firebaseBackend(fs, db); attach(be);
-      S.roleUnsub = be.watchDoc('users', String(user.email || '').toLowerCase(), d => { S.userRole = d?.role || ''; applyRole(); render(); }, () => {});
+      if(!user){ detach(); S.uid=null; S.email=null; closeSheet(); setMode(/[?&]signup\b/.test(location.search) && !S.signupShown ? 'signup' : 'login'); S.signupShown = true; return; }
+      detach(); S.uid = user.uid; S.email = user.email; S.owner = false; S.userRole = ''; S.userDoc = null; S.admin = false; document.body.classList.add('worker');
+      const be = firebaseBackend(fs, db), em = String(user.email || '').toLowerCase(), rk = 'otara-role:' + em;
+      let owner = null, got = false, live = false;
+      // Данные открываются только владельцу или тому, кому администратор назначил роль; новая заявка ждёт одобрения
+      const decide = () => {
+        if(owner === null || !got || S.uid !== user.uid) return;
+        const ok = owner || (S.userRole && S.userRole !== 'pending' && ROLE[S.userRole]);
+        if(ok){ if(!live){ live = true; attach(be); scheduleFeed(); scheduleGroups(); } applyRole(); render(); }
+        else { if(live){ live = false; detachData(); } S.be = be; setMode('pending'); }
+      };
+      setMode('loading');
+      isAdminEmail(user.email).then(ok => { owner = ok; S.owner = ok; decide(); });
+      S.roleUnsub = be.watchDoc('users', em, (d, fromCache) => {
+        let r = d?.role || '';
+        if(!d && fromCache){ try{ r = localStorage.getItem(rk) || ''; }catch(_){} if(!r && !got) return; }
+        S.userDoc = d; S.userRole = r; got = true; try{ if(d) localStorage.setItem(rk, r); }catch(_){}
+        decide();
+      }, () => { try{ S.userRole = localStorage.getItem(rk) || ''; }catch(_){} got = true; decide(); });
     });
   }catch(e){
     // нет интернета при самом первом запуске — библиотеки ещё не сохранены на телефоне
     setMode('nolib');
   }
 }
-function detach(){ unsubs.forEach(u => u()); unsubs = []; COLS.forEach(c => S[c] = []); [S.roleUnsub, S.usersUnsub].forEach(u => { try{ u && u(); }catch(_){} }); S.roleUnsub = S.usersUnsub = null; S.users = []; }
+function detachData(){ unsubs.forEach(u => u()); unsubs = []; COLS.forEach(c => S[c] = []); try{ S.usersUnsub && S.usersUnsub(); }catch(_){} S.usersUnsub = null; S.users = []; }
+function detach(){ detachData(); try{ S.roleUnsub && S.roleUnsub(); }catch(_){} S.roleUnsub = null; }
 function attach(be){
-  detach(); S.be = be; S.loaded = {}; S.pending = {};
+  detachData(); S.be = be; S.loaded = {}; S.pending = {};
   for(const c of COLS){
     unsubs.push(be.subscribe(c, (docs, pend) => {
       S[c] = docs; S.loaded[c] = 1; S.pending[c] = !!pend;
-      updateSync(); scheduleRender(); scheduleFeed(); if(c==='animals') scheduleGroups();
+      updateSync(); scheduleRender(); scheduleFeed(); if(c==='animals') scheduleGroups(); migrateUsers();
     }, err => { if(err && err.code==='permission-denied') setMode('denied'); }));
   }
   S.mode = 'live'; updateSync(); render();
@@ -505,11 +520,29 @@ function gateView(){
     case 'loading': return msg('Загрузка…','Открываем данные на телефоне.');
     case 'login': return `<form class="login" id="lf" novalidate>
       <div class="loginbrand"><img src="icons/logo-round.png" alt=""><div><div class="eyebrow">Учёт овец и коз</div><h1>Берегиня</h1></div></div>
-      <p>Войдите учётной записью, которую создал владелец хозяйства. Входить нужно с интернетом, дальше приложение работает и без него.</p>
+      <p>Войдите своей почтой и паролем. Первый вход — с интернетом, дальше программа работает и без него.</p>
       ${fld('l-email','Эл. почта',`<input id="l-email" name="email" type="email" autocomplete="username" required>`)}
       ${fld('l-pass','Пароль',`<input id="l-pass" name="password" type="password" autocomplete="current-password" required>`)}
       <p class="err" id="lerr" hidden></p>
-      <button class="btn primary" type="submit">Войти</button></form>`;
+      <button class="btn primary" type="submit">Войти</button>
+      <div class="kv"><button type="button" class="link" data-act="to-signup">Нет учётной записи? Подать заявку</button><a class="link" href="info/">О программе и инструкция</a></div></form>`;
+    case 'signup': return `<form class="login" id="sf" novalidate>
+      <div class="loginbrand"><img src="icons/logo-round.png" alt=""><div><div class="eyebrow">Заявка на доступ</div><h1>Берегиня</h1></div></div>
+      <p>Заполните заявку. Администратор хозяйства проверит её и назначит вам роль — после этого программа откроется сама.</p>
+      ${fld('s-name','Фамилия и имя',`<input id="s-name" name="name" autocomplete="name" required placeholder="Иванов Иван">`)}
+      ${fld('s-wish','Кем работаете',`<select id="s-wish" name="wish">${['Бригадир','Ветеринарный врач','Кормач','Механизатор','Управляющий','Бухгалтер','Другое'].map(x => opt(x, x, '')).join('')}</select>`)}
+      ${fld('s-email','Эл. почта',`<input id="s-email" name="email" type="email" autocomplete="username" required>`)}
+      <div class="two">${fld('s-pass','Пароль (от 6 знаков)',`<input id="s-pass" name="password" type="password" autocomplete="new-password" required minlength="6">`)}${fld('s-pass2','Ещё раз',`<input id="s-pass2" name="password2" type="password" autocomplete="new-password" required>`)}</div>
+      <p class="err" id="serr" hidden></p>
+      <button class="btn primary" type="submit">Отправить заявку</button>
+      <div class="kv"><button type="button" class="link" data-act="to-login">Уже есть учётная запись — войти</button><a class="link" href="info/">О программе</a></div></form>`;
+    case 'pending': { const d = S.userDoc;
+      return `<div class="login"><div class="loginbrand"><img src="icons/logo-round.png" alt=""><div><div class="eyebrow">${d?.rejected ? 'Заявка отклонена' : 'Заявка отправлена'}</div><h1>Берегиня</h1></div></div>
+      ${d ? `<p>${d.rejected ? 'Администратор отклонил заявку. Если это ошибка — свяжитесь с ним.' : `<b>${esc(d.name || S.email)}</b>, ваша заявка у администратора. Как только он назначит вам роль, программа откроется сама — держите эту страницу открытой или зайдите позже.`}</p><p class="muted">Почта: ${esc(S.email)}${d.wish ? ' · ' + esc(d.wish) : ''}</p>`
+        : `<p>Для почты <b>${esc(S.email)}</b> доступ ещё не выдан. Отправьте заявку — администратор назначит роль.</p>
+          ${fld('p-name','Фамилия и имя',`<input id="p-name" autocomplete="name" placeholder="Иванов Иван">`)}
+          <button class="btn primary" data-act="re-request">Отправить заявку</button>`}
+      <button class="btn" data-act="logout">Выйти</button></div>`; }
     case 'noconfig': return `<div class="login"><div class="loginbrand"><img src="icons/logo-round.png" alt=""><div><div class="eyebrow">Учёт овец и коз</div><h1>Берегиня</h1></div></div>
       <p>Синхронизация между телефонами ещё не настроена: в файле config.js нет данных проекта Firebase. Шаги — в инструкции README.</p>
       <p>Можно уже сейчас вести учёт на этом устройстве. Эти записи останутся только здесь и не перенесутся в общую базу автоматически.</p>
@@ -518,6 +551,10 @@ function gateView(){
     case 'denied': return msg('Нет доступа к данным','База отклонила запрос. Проверьте, что правила Firestore опубликованы по инструкции.') + `<button class="btn" data-act="logout">Выйти</button>`;
   }
   return '';
+}
+async function sendRequest(email, name, wish){
+  const em = String(email || '').toLowerCase();
+  await fb.fs.setDoc(fb.fs.doc(fb.db, 'users', em), {role:'pending', name, wish:wish || '', requested:Date.now()});
 }
 function bindGate(){
   const f = $('#lf');
@@ -533,6 +570,33 @@ function bindGate(){
       btn.disabled = false; btn.textContent = 'Войти';
     }
   };
+  const ts = document.querySelector('[data-act="to-signup"]'); if(ts) ts.onclick = () => setMode('signup');
+  const tl = document.querySelector('[data-act="to-login"]'); if(tl) tl.onclick = () => setMode('login');
+  const sf = $('#sf');
+  if(sf) sf.onsubmit = async ev => {
+    ev.preventDefault();
+    const d = Object.fromEntries(new FormData(sf)), err = $('#serr'), btn = sf.querySelector('button[type=submit]');
+    const bad = t => { err.hidden = false; err.textContent = t; };
+    d.name = (d.name || '').trim(); d.email = (d.email || '').trim().toLowerCase();
+    if(!d.name) return bad('Укажите фамилию и имя.');
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email)) return bad('Проверьте почту.');
+    if((d.password || '').length < 6) return bad('Пароль — не меньше 6 знаков.');
+    if(d.password !== d.password2) return bad('Пароли не совпадают.');
+    btn.disabled = true; btn.textContent = 'Отправляем…';
+    try{
+      await fb.au.createUserWithEmailAndPassword(fb.auth, d.email, d.password);
+      await sendRequest(d.email, d.name, d.wish);
+    }catch(e){
+      btn.disabled = false; btn.textContent = 'Отправить заявку';
+      bad(e.code==='auth/email-already-in-use' ? 'Эта почта уже зарегистрирована — войдите с ней.'
+        : e.code==='auth/network-request-failed' ? 'Нет интернета. Заявку можно отправить только онлайн.'
+        : e.code==='auth/operation-not-allowed' || e.code==='auth/admin-restricted-operation' ? 'Регистрация сейчас закрыта. Попросите администратора создать вам учётную запись.'
+        : e.code==='auth/weak-password' ? 'Слишком простой пароль.' : 'Не удалось отправить заявку. Попробуйте ещё раз.');
+    }
+  };
+  const rr = document.querySelector('[data-act="re-request"]');
+  if(rr) rr.onclick = async () => { const n = ($('#p-name')?.value || '').trim(); if(!n){ toast('Укажите фамилию и имя'); return; } rr.disabled = true;
+    try{ await sendRequest(S.email, n, ''); toast('Заявка отправлена'); }catch(_){ rr.disabled = false; toast('Не удалось отправить. Проверьте интернет.'); } };
   const go = document.querySelector('[data-act="go-local"]');
   if(go) go.onclick = () => { try{ localStorage.setItem('otara-mode','local'); }catch(_){} startLocal(false); };
   const lo = document.querySelector('[data-act="logout"]');
@@ -726,6 +790,7 @@ function homeView(){
   return `<div class="dash"><div class="dl">
     <div class="hero-b" role="img" aria-label="Берегиня — ваш надёжный помощник в управлении поголовьем МРС"><picture><source media="(min-width:700px)" srcset="icons/hero-wide.jpg"><img src="icons/hero-phone.jpg" alt=""></picture></div>
     <div class="kpis">${st('sheep', 'sheep', 'Овцы', 'k1')}${st('goat', 'goat', 'Козы', 'k2')}${st('young', 'lamb', 'Ягнята / Козлята', 'k3')}${st('all', 'herd', 'Всего голов', 'k4')}</div>
+    ${(() => { const n = S.admin ? (S.users || []).filter(u => u.role === 'pending' && u.requested && !u.rejected).length : 0; return n ? `<button class="banner as-btn todayb" data-tab-go="people">${hico('herd')}<span>Новые заявки на доступ: <b>${n}</b> — назначить роль</span><span>›</span></button>` : ''; })()}
     ${nToday ? `<button class="banner as-btn todayb" data-nav="events" data-aghz2="today">${hico('cal')}<span>События сегодня: <b>${nToday}</b> — что сделать</span><span>›</span></button>` : ''}
     <div class="card recentcard"><div class="card-h"><h3>Последние записи</h3><button class="link" data-nav="events" data-aghz2="week">Все события ›</button></div>${recentRows()}</div>
     </div><div class="dr">
@@ -918,7 +983,8 @@ const ROLE_DEF = {
   vet:     {l:'Ветеринарный врач', d:'Ветаптека, лечение, вакцинация, обработки, схемы, окоты, молоко'},
   feeder:  {l:'Кормач', d:'Склад кормов, табель и рационы по загонам; стадо — просмотр'},
   mechanic:{l:'Механизатор', d:'Техника и ГСМ'},
-  viewer:  {l:'Пользователь (просмотр)', d:'Только просмотр и выгрузка в Excel — напр. для бухгалтера'}
+  viewer:  {l:'Пользователь (просмотр)', d:'Только просмотр и выгрузка в Excel — напр. для бухгалтера'},
+  pending: {l:'Нет доступа (заявка)', d:'Новая заявка или отключённый сотрудник — программа не открывается'}
 };
 const VET_TYPES = new Set(['ill', 'vac', 'treat', 'vit', 'dose', 'result']);
 const ALL_TABS = ['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'plan', 'money', 'stats', 'feedsheet', 'yplan', 'genetics', 'daily'];
@@ -931,7 +997,8 @@ const ROLE = {
             xl:['herd', 'births', 'events', 'milk', 'milkHeads', 'milkOut', 'vet']},
   feeder:  {create:['feed', 'plan'], edit:['feed'], manage:['feed'], tabs:['home', 'herd', 'pens', 'stock', 'feedsheet', 'more'], stock:['feed'], xl:['feed', 'pens']},
   mechanic:{create:['fuel', 'plan'], edit:['fuel'], manage:['fuel'], tabs:['home', 'stock', 'more'], stock:['fuel', 'tech'], xl:['fuel', 'tech']},
-  viewer:  {create:[], edit:[], manage:[], tabs:ALL_TABS, stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'}
+  viewer:  {create:[], edit:[], manage:[], tabs:ALL_TABS, stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
+  pending: {create:[], edit:[], manage:[], tabs:[], stock:[], xl:[]}
 };
 const legacyRole = () => ({feeder:'feeder', worker:'foreman'})[(setting('people')?.roles || {})[String(S.email || '').toLowerCase()]] || '';
 function roleOf(){
@@ -962,7 +1029,7 @@ function applyRole(){
   ['vet', 'feed', 'fuel'].forEach(d => { document.body.classList.toggle('cm-' + d, canManage(d)); document.body.classList.toggle('ce-' + d, canEdit(d)); });
   if(!canTab(S.tab)) S.tab = 'home';
   if(!canStock(S.stockCat)) S.stockCat = R().stock[0] || 'feed';
-  if(S.admin && S.be && S.be.subscribe && !S.usersUnsub){ S.usersUnsub = S.be.subscribe('users', docs => { S.users = docs; if(S.tab === 'people') scheduleRender(); }, () => {}); }
+  if(S.admin && S.be && S.be.subscribe && !S.usersUnsub){ S.usersUnsub = S.be.subscribe('users', docs => { S.users = docs; S.usersLoaded = true; migrateUsers(); scheduleRender(); }, () => {}); }
 }
 
 const whoName = e => { if(!e) return ''; const k = String(e).toLowerCase().trim(); return peopleNames()[k] || String(e).split('@')[0]; };
@@ -980,22 +1047,44 @@ function peopleView(){
   const names = peopleNames(), users = Object.fromEntries((S.users || []).map(u => [u.id, u]));
   const legacy = setting('people')?.roles || {};
   const me = String(S.email || '').toLowerCase();
-  const list = [...new Set([...knownEmails(), ...Object.keys(users)])].filter(e => e && e !== me).sort((a, b) => whoName(a).localeCompare(whoName(b), 'ru'));
-  const curRole = e => users[e]?.role || ({feeder:'feeder', worker:'foreman'})[legacy[e]] || 'foreman';
+  const reqIds = new Set((S.users || []).filter(u => u.role === 'pending' && u.requested && !u.rejected).map(u => u.id));
+  const list = [...new Set([...knownEmails(), ...Object.keys(users)])].filter(e => e && e !== me && !reqIds.has(e)).sort((a, b) => whoName(a).localeCompare(whoName(b), 'ru'));
+  const curRole = e => users[e]?.role || ({feeder:'feeder', worker:'foreman'})[legacy[e]] || 'pending';
   const roleSel = (attr, cur) => `<select ${attr} class="rolesel" aria-label="Роль">${Object.entries(ROLE_DEF).map(([k, r]) => opt(k, r.l, cur)).join('')}</select>`;
+  const reqs = (S.users || []).filter(u => u.role === 'pending' && u.requested && !u.rejected).sort((a, b) => b.requested - a.requested);
+  if(reqs.length) h += `<div class="panel" style="gap:10px"><div class="eyebrow">Новые заявки · ${reqs.length}</div>${reqs.map(u => `<div class="panel" style="gap:8px"><div class="name" style="white-space:normal">${esc(u.name || u.id)}${u.wish ? ` <span class="muted">· ${esc(u.wish)}</span>` : ''}</div>
+      <div class="sub" style="word-break:break-all;white-space:normal">${esc(u.id)} · ${fmtD(iso(new Date(u.requested)))}</div>
+      <div class="two"><select data-reqrole="${esc(u.id)}" aria-label="Роль">${Object.entries(ROLE_DEF).filter(([k]) => k !== 'pending').map(([k, r]) => opt(k, r.l, WISH_ROLE[u.wish] || 'foreman')).join('')}</select><button type="button" class="btn primary" data-approve="${esc(u.id)}">Одобрить</button></div>
+      <button type="button" class="link" data-reject="${esc(u.id)}" style="align-self:flex-start">Отклонить</button></div>`).join('')}</div>`;
   h += `<details class="panel"><summary class="eyebrow">Что может каждая роль</summary>${Object.values(ROLE_DEF).map(r => `<div class="kv"><span><b style="color:var(--fg)">${r.l}</b></span></div><p class="muted" style="margin:0 0 6px">${r.d}</p>`).join('')}
       <p class="muted" style="margin:0">Выгрузка в Excel есть у всех — по своим разделам. Роль видят только сам человек и администраторы.</p></details>
     <form id="pplf" novalidate><div class="ppl">${list.map((e, i) => `<div class="panel" style="gap:8px"><div class="sub" style="word-break:break-all;white-space:normal">${esc(e)}</div>
       <div class="two"><input id="ppl-${i}" name="${esc(e)}" value="${esc(names[e] || users[e]?.name || '')}" placeholder="имя, например Иван" autocomplete="off">${roleSel(`data-role="${esc(e)}"`, curRole(e))}</div></div>`).join('')}</div>
     <div class="eyebrow">Новый пользователь</div>
-    <p class="muted" style="margin:0">Сначала создайте его в консоли Firebase (Authentication → Users → Add user), потом впишите ту же почту здесь.</p>
+    <p class="muted" style="margin:0">Проще всего — дайте сотруднику ссылку на программу: он нажмёт «Подать заявку», и заявка появится вверху этой страницы. Или создайте вход сами в консоли Firebase (Authentication → Users → Add user) и впишите ту же почту здесь.</p>
     <div class="two">${fld('ppl-new','Почта',`<input id="ppl-new" type="email" placeholder="ivan@mail.ru" autocomplete="off">`)}${fld('ppl-newn','Имя',`<input id="ppl-newn" placeholder="Иван" autocomplete="off">`)}</div>
     ${fld('ppl-newr','Роль', roleSel('id="ppl-newr"', 'foreman'))}
     <p class="err" id="pplerr" hidden></p>
     <div class="actions"><button class="btn primary" type="submit">Сохранить</button></div></form>`;
   return h;
 }
+// Один раз: тем, кто уже работал в программе без назначенной роли, записываем роль явно (раньше по умолчанию был бригадир),
+// чтобы после новых правил они не попали в «Нет доступа»
+let migratedUsers = false;
+function migrateUsers(){
+  if(migratedUsers || !S.admin || S.local || !S.usersLoaded || !ready('settings', 'moves', 'milk', 'milkout', 'events', 'animals', 'finance')) return;
+  migratedUsers = true;
+  const have = new Set((S.users || []).map(u => u.id)), me = String(S.email || '').toLowerCase(), legacy = setting('people')?.roles || {}, names = peopleNames();
+  const list = [...new Set([...knownEmails(), ...Object.keys(legacy).map(x => x.toLowerCase())])].filter(e => /@/.test(e) && e !== me && !have.has(e));
+  if(list.length) silently(() => list.forEach(e => store.set('users', e, {role: ({feeder:'feeder', worker:'foreman'})[legacy[e]] || 'foreman', name: names[e] || ''})));
+}
+const WISH_ROLE = {'Бригадир':'foreman', 'Ветеринарный врач':'vet', 'Кормач':'feeder', 'Механизатор':'mechanic', 'Управляющий':'manager', 'Бухгалтер':'viewer'};
 function bindPeople(){
+  document.querySelectorAll('[data-approve]').forEach(b => b.onclick = () => { const e = b.dataset.approve, u = (S.users || []).find(x => x.id === e), role = document.querySelector(`[data-reqrole="${CSS.escape(e)}"]`).value;
+    const names = {...peopleNames()}; if(u?.name) names[e] = u.name;
+    store.set('users', e, {role, name:u?.name || '', wish:u?.wish || '', requested:u?.requested || null}); store.set('settings', 'people', {...(setting('people') || {}), names});
+    toast(`Одобрено: ${u?.name || e} — ${ROLE_DEF[role].l}`); });
+  document.querySelectorAll('[data-reject]').forEach(b => b.onclick = () => { const e = b.dataset.reject; store.merge('users', e, {rejected:true}); toast('Заявка отклонена'); });
   const f = $('#pplf'); if(!f) return;
   f.onsubmit = ev => {
     ev.preventDefault(); const names = {...peopleNames()}, users = Object.fromEntries((S.users || []).map(u => [u.id, u]));
@@ -1113,7 +1202,7 @@ function moreView(){
   ].filter(Boolean).join('');
   let h = `<div><div class="eyebrow">${esc(S.demo ? 'Демо · ' + (ROLE_DEF[roleOf()]?.l || '') : S.local ? 'Учёт на этом устройстве' : whoName(S.email) + ' · ' + (ROLE_DEF[roleOf()]?.l || '').toLowerCase())}</div><h2>Ещё</h2></div><div class="list">${rows}</div>`;
   if(S.admin || roleOf() === 'manager') h += `<div class="panel"><div class="eyebrow">Резервная копия</div><p class="muted">Файл со всеми записями. Сохраняйте его раз в месяц.</p><div class="actions"><button class="btn" data-act="backup">Сохранить копию</button></div></div>`;
-  if(S.demo) h += `<div class="panel"><div class="eyebrow">Демо: посмотреть программу глазами роли</div><select id="demo-role">${Object.entries(ROLE_DEF).map(([k, r]) => opt(k, r.l, roleOf())).join('')}</select></div>`;
+  if(S.demo) h += `<div class="panel"><div class="eyebrow">Демо: посмотреть программу глазами роли</div><select id="demo-role">${Object.entries(ROLE_DEF).filter(([k]) => k !== 'pending').map(([k, r]) => opt(k, r.l, roleOf())).join('')}</select></div>`;
   if(S.local && !S.demo) h += `<div class="banner">Записи хранятся только на этом устройстве. Чтобы вести учёт вместе, настройте синхронизацию по инструкции README.</div>`;
   if(!S.local) h += `<div class="actions"><button class="btn" data-act="logout">Выйти из учётной записи</button></div>`;
   return h;

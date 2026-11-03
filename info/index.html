@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Берегиня — учёт овец и коз</title>
+<meta name="description" content="Берегиня — программа учёта поголовья овец и коз: стадо и загоны, ветеринария, окоты, молоко, склад, отчёты. Работает на телефоне и компьютере, в том числе без интернета.">
+<meta name="theme-color" content="#071422">
+<link rel="manifest" href="../manifest.webmanifest">
+<link rel="icon" href="../icons/icon-192.png">
+<link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Golos+Text:wght@400;500;600&family=Cormorant+Garamond:wght@600;700&display=swap">
+<style>
+:root{
+  --bg:#071422; --bg2:#0A1A2C; --surface:#0E2135; --sunk:#14304A; --fg:#E9EFF6; --muted:#93A7BC; --line:#1D3A56;
+  --accent:#1F9F67; --accent-hi:#2FC27F; --gold:#D9B45E; --blue:#4D8EF0; --warn:#F2B13F;
+  --f-serif:"Cormorant Garamond",Georgia,serif;
+  --f-display:"Manrope","Golos Text",system-ui,sans-serif;
+  --f-body:"Golos Text",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --r:18px; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:76px}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 var(--f-body);-webkit-font-smoothing:antialiased}
+img{max-width:100%;height:auto;display:block}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--accent-hi);outline-offset:3px;border-radius:6px}
+.wrap{max-width:1160px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left,0px))}
+h1,h2,h3{font-family:var(--f-display);line-height:1.15;margin:0;letter-spacing:-.01em}
+h2{font-size:clamp(28px,4vw,40px);font-weight:800}
+h3{font-size:19px;font-weight:700}
+p{margin:0}
+.muted{color:var(--muted)}
+.eyebrow{font:600 13px/1 var(--f-body);letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+
+/* шапка */
+header.top{position:sticky;top:0;z-index:20;background:rgba(7,20,34,.86);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+header.top .wrap{display:flex;align-items:center;gap:20px;height:64px}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none}
+.brand img{width:40px;height:40px;border-radius:50%}
+.brand b{font:700 26px/1 var(--f-serif);letter-spacing:.01em}
+nav.links{display:flex;gap:22px;margin-left:auto;font-size:15px}
+nav.links a{text-decoration:none;color:var(--muted)}
+nav.links a:hover{color:var(--fg)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:46px;padding:0 20px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font:600 15px/1 var(--f-display);text-decoration:none;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:#2B5277}
+.btn.primary{background:linear-gradient(180deg,#25B072,#1C8F5D);border-color:transparent;color:#fff;box-shadow:0 8px 24px rgba(31,159,103,.28)}
+.btn.primary:hover{filter:brightness(1.06)}
+.btn.gold{background:transparent;border-color:rgba(217,180,94,.5);color:var(--gold)}
+.btn.small{min-height:38px;padding:0 14px;font-size:14px}
+@media (max-width:900px){nav.links{display:none} header.top .btn.small{margin-left:auto}}
+
+/* первый экран */
+.hero{position:relative;overflow:hidden;padding:72px 0 40px}
+.hero::before{content:"";position:absolute;inset:-200px -100px auto auto;width:720px;height:720px;background:radial-gradient(closest-side,rgba(31,159,103,.22),transparent);pointer-events:none}
+.hero::after{content:"";position:absolute;inset:auto auto -260px -200px;width:640px;height:640px;background:radial-gradient(closest-side,rgba(217,180,94,.12),transparent);pointer-events:none}
+.hero .wrap{position:relative;display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center}
+.hero h1{font:700 clamp(48px,7vw,84px)/1 var(--f-serif);letter-spacing:0}
+.hero h1 span{display:block;font:700 clamp(20px,2.4vw,28px)/1.25 var(--f-display);color:var(--muted);margin-top:14px;letter-spacing:-.01em}
+.hero .lead{font-size:18px;color:#C6D3E0;margin:22px 0 28px;max-width:34em}
+.cta{display:flex;flex-wrap:wrap;gap:12px}
+.facts{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:26px;color:var(--muted);font-size:14px}
+.facts span::before{content:"✓";color:var(--accent-hi);margin-right:7px;font-weight:700}
+.shots{position:relative;min-height:420px}
+.shots .desk{border-radius:14px;border:1px solid var(--line);box-shadow:0 30px 80px rgba(0,0,0,.5);width:100%}
+.phone{border-radius:30px;border:6px solid #0C1726;box-shadow:0 0 0 1px #24405e,0 24px 60px rgba(0,0,0,.55);overflow:hidden;background:#0C1726}
+.shots .phone{position:absolute;width:34%;right:-4%;bottom:-36px}
+@media (max-width:900px){
+  .hero{padding-top:40px}
+  .hero .wrap{grid-template-columns:1fr;gap:36px}
+  .shots{min-height:0;padding-bottom:40px}
+  .shots .phone{width:38%;right:0;bottom:0}
+}
+
+section{padding:76px 0;border-top:1px solid var(--line)}
+section.alt{background:var(--bg2)}
+.sh{display:grid;gap:12px;margin-bottom:36px;max-width:720px}
+.sh p{color:var(--muted);font-size:17px}
+
+/* как получить доступ */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;counter-reset:st}
+.step{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:24px;display:grid;gap:10px;align-content:start}
+.step::before{counter-increment:st;content:counter(st);width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:rgba(31,159,103,.16);color:var(--accent-hi);font:800 17px/1 var(--f-display)}
+.step p{color:var(--muted)}
+.step .btn{justify-self:start;margin-top:6px}
+@media (max-width:820px){.steps{grid-template-columns:1fr}}
+
+/* возможности */
+.feat{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:22px;display:grid;gap:8px;align-content:start}
+.card .ic{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:var(--sunk);color:var(--gold);margin-bottom:6px}
+.card .ic svg{width:24px;height:24px}
+.card p{color:var(--muted);font-size:15px}
+@media (max-width:960px){.feat{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:620px){.feat{grid-template-columns:1fr}}
+
+.gallery{display:flex;gap:18px;overflow-x:auto;padding:8px 2px 18px;margin-top:40px;scroll-snap-type:x mandatory}
+.gallery figure{margin:0;flex:0 0 220px;scroll-snap-align:start;display:grid;gap:10px}
+.gallery figcaption{font-size:14px;color:var(--muted);text-align:center}
+.gallery::-webkit-scrollbar{height:8px}.gallery::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+
+/* роли */
+.tbl{width:100%;border-collapse:separate;border-spacing:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.tbl th,.tbl td{text-align:left;padding:14px 18px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl tr:last-child td{border-bottom:0}
+.tbl th{font:600 13px/1.2 var(--f-body);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--sunk)}
+.tbl td:first-child{font-weight:600;white-space:nowrap}
+.tbl td{color:#C6D3E0}
+@media (max-width:700px){
+  .tbl thead{display:none}
+  .tbl,.tbl tbody,.tbl tr,.tbl td{display:block}
+  .tbl tr{padding:14px 16px;border-bottom:1px solid var(--line)}
+  .tbl tr:last-child{border-bottom:0}
+  .tbl td{padding:3px 0;border:0;white-space:normal!important}
+  .tbl td:nth-child(3){color:var(--muted);font-size:14px}
+  .tbl td:nth-child(3)::before{content:"Excel: "}
+}
+
+/* установка */
+.tabs{display:inline-flex;gap:4px;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:14px;margin-bottom:22px;flex-wrap:wrap}
+.tabs button{border:0;background:transparent;color:var(--muted);font:600 15px/1 var(--f-display);padding:12px 18px;border-radius:10px;cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--sunk);color:var(--fg)}
+.inst{display:grid;grid-template-columns:1.2fr .8fr;gap:28px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:26px}
+ol.how{margin:0;padding:0;list-style:none;counter-reset:h;display:grid;gap:16px}
+ol.how li{counter-increment:h;display:grid;grid-template-columns:34px 1fr;gap:12px;align-items:start}
+ol.how li::before{content:counter(h);width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--sunk);color:var(--gold);font:700 15px/1 var(--f-display);margin-top:-2px}
+ol.how b{color:var(--fg)}
+.note{margin-top:20px;padding:14px 16px;border-radius:12px;background:rgba(217,180,94,.08);border:1px solid rgba(217,180,94,.25);color:#D8CBA6;font-size:15px}
+.k{display:inline-block;padding:1px 8px;border-radius:6px;background:var(--sunk);border:1px solid var(--line);font-weight:600;white-space:nowrap}
+#installBox{display:none;margin-bottom:18px}
+@media (max-width:860px){.inst{grid-template-columns:1fr}}
+
+/* офлайн */
+.off{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.st{display:grid;gap:12px}
+.stat{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.pill{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:999px;background:var(--sunk);border:1px solid var(--line);font-size:13px;white-space:nowrap}
+.pill i{width:8px;height:8px;border-radius:50%;background:var(--accent-hi)}
+.pill.w i{background:var(--warn)}
+.stat p{grid-column:2;color:var(--muted);font-size:14px}
+ul.rules{margin:0;padding:0;list-style:none;display:grid;gap:12px}
+ul.rules li{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px;color:var(--muted);font-size:15px}
+ul.rules b{color:var(--fg);display:block;margin-bottom:2px;font-size:16px}
+@media (max-width:820px){.off{grid-template-columns:1fr}}
+
+/* вопросы */
+.faq{display:grid;gap:10px;max-width:860px}
+.faq details{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:0 18px}
+.faq summary{cursor:pointer;list-style:none;padding:16px 0;font:600 16px/1.35 var(--f-display);display:flex;justify-content:space-between;gap:16px}
+.faq summary::after{content:"+";color:var(--gold);font-size:22px;line-height:1}
+.faq details[open] summary::after{content:"−"}
+.faq summary::-webkit-details-marker{display:none}
+.faq details p{padding:0 0 16px;color:var(--muted)}
+
+.final{text-align:center;padding:84px 0;border-top:1px solid var(--line);background:radial-gradient(60% 120% at 50% 0%,rgba(31,159,103,.14),transparent)}
+.final h2{margin-bottom:12px}
+.final .cta{justify-content:center;margin-top:26px}
+footer{padding:28px 0 calc(28px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);color:var(--muted);font-size:14px}
+footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+
+<header class="top"><div class="wrap">
+  <a class="brand" href="./" aria-label="Берегиня — на главную"><img src="../icons/logo-round.png" alt=""><b>Берегиня</b></a>
+  <nav class="links" aria-label="Разделы">
+    <a href="#access">Доступ</a><a href="#features">Возможности</a><a href="#roles">Роли</a><a href="#install">Установка</a><a href="#offline">Без интернета</a><a href="#faq">Вопросы</a>
+  </nav>
+  <a class="btn small primary" href="../">Войти</a>
+</div></header>
+
+<main>
+<div class="hero"><div class="wrap">
+  <div>
+    <div class="eyebrow">Учёт овец и коз</div>
+    <h1 style="margin-top:14px">Берегиня<span>вся работа хозяйства — в одной программе на телефоне и компьютере</span></h1>
+    <p class="lead">Стадо по загонам, ветеринария по схемам, окоты, надои, склад кормов и ГСМ, отчёты и акты в Excel. Каждый сотрудник видит свой участок работы, а записи сразу появляются у всех.</p>
+    <div class="cta">
+      <a class="btn primary" href="../">Открыть программу</a>
+      <a class="btn" href="../?signup">Подать заявку на доступ</a>
+      <a class="btn gold" href="#install">Установить</a>
+    </div>
+    <div class="facts"><span>Android, iPhone, компьютер</span><span>Работает без интернета</span><span>Ничего не нужно скачивать из магазинов</span></div>
+  </div>
+  <div class="shots">
+    <img class="desk" src="img/desk-home.jpg" width="1440" height="900" alt="Главный экран программы на компьютере: поголовье, календарь событий, последние записи, быстрые действия">
+    <div class="phone"><img src="img/m-home.jpg" width="540" height="1168" alt="Главный экран программы на телефоне"></div>
+  </div>
+</div></div>
+
+<section id="access"><div class="wrap">
+  <div class="sh"><div class="eyebrow">Как начать</div><h2>Три шага до работы</h2><p>Программа закрытая: данные хозяйства видят только сотрудники, которых одобрил администратор.</p></div>
+  <div class="steps">
+    <div class="step"><h3>Подайте заявку</h3><p>Укажите фамилию и имя, должность, почту и придумайте пароль. Почта нужна только для входа — писем на неё не приходит.</p><a class="btn small primary" href="../?signup">Подать заявку</a></div>
+    <div class="step"><h3>Дождитесь одобрения</h3><p>Администратор назначит вам роль. Пока он этого не сделал, программа покажет «Заявка отправлена» — после одобрения откроется сама.</p></div>
+    <div class="step"><h3>Установите и работайте</h3><p>Добавьте значок на экран телефона или компьютера — инструкция ниже. Дальше программа работает и без интернета.</p><a class="btn small" href="#install">Как установить</a></div>
+  </div>
+</div></section>
+
+<section id="features" class="alt"><div class="wrap">
+  <div class="sh"><div class="eyebrow">Возможности</div><h2>Что умеет программа</h2><p>От карточки каждого животного до отчёта за день и акта выбытия для бухгалтерии.</p></div>
+  <div class="feat">
+    <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V9l9-6 9 6v12"/><path d="M9 21v-6h6v6"/></svg></div><h3>Стадо и загоны</h3><p>Карточка каждой овцы и козы: бирка, загон, группа, возраст, мать и отец, вес, надой, история. Поиск по бирке, перевод между загонами и группами.</p></div>
+    <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m18 2 4 4"/><path d="m17 7 3-3"/><path d="M19 9 8.7 19.3a2.4 2.4 0 0 1-3.4 0l-.6-.6a2.4 2.4 0 0 1 0-3.4L15 5"/><path d="m9 11 4 4"/><path d="m5 19-3 3"/></svg></div><h3>Ветеринария по схемам</h3><p>Лечение, вакцинация, дегельминтизация, витамины. Программа сама напомнит, кого и чем колоть каждый день, и через сколько дней ревакцинация.</p></div>
+    <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 5.6-7 10-7 10z"/></svg></div><h3>Окоты и генетика</h3><p>Окот с карточками детёнышей сразу: бирка, пол, вес, порода. Подбор баранов без близкого родства по родословной.</p></div>
+    <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2h8"/><path d="M9 2v3.5L6 10v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V10l-3-4.5V2"/><path d="M6 14h12"/></svg></div><h3>Молоко</h3><p>Надои утро и вечер, козье и овечье, отгрузки на сыроварню, остаток в танке, средний удой на голову.</p></div>
+    <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M7 21v-8h10v8"/><path d="M7 17h10"/></svg></div><h3>Склад</h3><p>Корма, ГСМ, ветаптека и техника: приход, расход, остатки, сроки годности. Заправка техники с указанием, кто заправлял.</p></div>
+    <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div><h3>События и годовой план</h3><p>Что сделать сегодня и что впереди: уколы, ревакцинации, ожидаемые окоты, пробы молока в лабораторию — с напоминанием заранее.</p></div>
+    <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15v3M12 10v8M17 6v12"/></svg></div><h3>Отчёты и Excel</h3><p>Отчёт за день в Excel или текстом, выгрузка любого раздела за период, табель кормления для печати.</p></div>
+    <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg></div><h3>Акт выбытия СП-54</h3><p>Убой и падеж за месяц — готовый акт по типовой форме: номера, даты рождения, причина, диагноз.</p></div>
+    <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0"/><path d="M19 8v6M16 11h6"/></svg></div><h3>Роли и журнал</h3><p>У каждого сотрудника свой доступ. Администратор видит, кто, когда и что внёс или изменил.</p></div>
+  </div>
+  <div class="gallery" aria-label="Экраны программы">
+    <figure><div class="phone"><img src="img/m-card.jpg" width="540" height="1168" alt="Карточка животного" loading="lazy"></div><figcaption>Карточка животного</figcaption></figure>
+    <figure><div class="phone"><img src="img/m-events.jpg" width="540" height="1168" alt="События: что сделать сегодня" loading="lazy"></div><figcaption>События на сегодня</figcaption></figure>
+    <figure><div class="phone"><img src="img/m-milk.jpg" width="540" height="1168" alt="Учёт молока" loading="lazy"></div><figcaption>Молоко</figcaption></figure>
+    <figure><div class="phone"><img src="img/m-stock.jpg" width="540" height="1168" alt="Склад" loading="lazy"></div><figcaption>Склад</figcaption></figure>
+    <figure><div class="phone"><img src="img/m-daily.jpg" width="540" height="1168" alt="Отчёт за день" loading="lazy"></div><figcaption>Отчёт за день</figcaption></figure>
+  </div>
+</div></section>
+
+<section id="roles"><div class="wrap">
+  <div class="sh"><div class="eyebrow">Роли</div><h2>Кто что видит и делает</h2><p>Роль назначает администратор. Выгрузка в Excel есть у всех — по своим разделам.</p></div>
+  <table class="tbl">
+    <thead><tr><th>Роль</th><th>Что может</th><th>Excel</th></tr></thead>
+    <tbody>
+      <tr><td>Администратор</td><td>Всё в программе, журнал изменений, пользователи и роли</td><td>все разделы</td></tr>
+      <tr><td>Управляющий по эксплуатации</td><td>Всё, кроме ветеринарии; видит, кто что внёс, может исправлять</td><td>всё, кроме ветеринарии</td></tr>
+      <tr><td>Бригадир</td><td>Вносит все записи, но не исправляет и не удаляет их</td><td>все разделы</td></tr>
+      <tr><td>Ветеринарный врач</td><td>Ветаптека, лечение, вакцинация, обработки, схемы, манипуляции, окоты, молоко</td><td>стадо, окоты, ветеринария, молоко</td></tr>
+      <tr><td>Кормач</td><td>Склад кормов: приход, расход, остатки; табель и рационы по загонам</td><td>корма, загоны</td></tr>
+      <tr><td>Механизатор</td><td>Техника и ГСМ: заправки, приход топлива</td><td>ГСМ, техника</td></tr>
+      <tr><td>Пользователь</td><td>Только просмотр и выгрузка — например, для бухгалтера</td><td>все разделы</td></tr>
+    </tbody>
+  </table>
+</div></section>
+
+<section id="install" class="alt"><div class="wrap">
+  <div class="sh"><div class="eyebrow">Установка</div><h2>Как установить</h2><p>Программа ставится прямо из браузера — без Google Play и App Store. Сначала войдите с интернетом, потом добавьте значок.</p></div>
+  <div id="installBox"><button class="btn primary" id="installBtn">Установить Берегиню на это устройство</button></div>
+  <div class="tabs" role="tablist" aria-label="Устройство">
+    <button role="tab" id="t-android" aria-controls="p-android" aria-selected="true">Android</button>
+    <button role="tab" id="t-ios" aria-controls="p-ios" aria-selected="false">iPhone и iPad</button>
+    <button role="tab" id="t-pc" aria-controls="p-pc" aria-selected="false">Компьютер</button>
+  </div>
+  <div class="inst">
+    <div>
+      <div class="panel" role="tabpanel" id="p-android" aria-labelledby="t-android">
+        <ol class="how">
+          <li><span>Откройте программу в <b>Google Chrome</b>: <a href="../">dimaproba31-dev.github.io/Bereginya</a>.</span></li>
+          <li><span>Войдите своей почтой и паролем. Дождитесь зелёной надписи <span class="k">синхронизировано</span> вверху.</span></li>
+          <li><span>Нажмите меню <span class="k">⋮</span> справа вверху → <b>«Установить приложение»</b>. Если такого пункта нет — <b>«Добавить на главный экран»</b> → <b>«Установить»</b>.</span></li>
+          <li><span>На экране появится значок <b>«Берегиня»</b>. Открывайте программу только с него.</span></li>
+        </ol>
+        <p class="note">В Яндекс Браузере, Samsung Internet и Opera пункта «Установить» может не быть. Если Chrome нет — скачайте его бесплатно из Google Play.</p>
+      </div>
+      <div class="panel" role="tabpanel" id="p-ios" aria-labelledby="t-ios" hidden>
+        <ol class="how">
+          <li><span>Откройте программу в <b>Safari</b> (синий компас): <a href="../">dimaproba31-dev.github.io/Bereginya</a>.</span></li>
+          <li><span>Войдите и дождитесь надписи <span class="k">синхронизировано</span>.</span></li>
+          <li><span>Нажмите <b>«Поделиться»</b> — квадрат со стрелкой вверх (внизу экрана на iPhone, вверху на iPad).</span></li>
+          <li><span>Пролистайте вниз → <b>«На экран «Домой»»</b> → <b>«Добавить»</b>.</span></li>
+          <li><span>Откройте программу <b>с нового значка</b> и <b>войдите ещё раз</b> — на iPhone значок хранит вход отдельно от Safari.</span></li>
+        </ol>
+        <p class="note">Если ссылка открылась внутри Telegram или WhatsApp, нажмите «…» → «Открыть в Safari».</p>
+      </div>
+      <div class="panel" role="tabpanel" id="p-pc" aria-labelledby="t-pc" hidden>
+        <ol class="how">
+          <li><span>Откройте программу в <b>Google Chrome</b> или <b>Microsoft Edge</b>, войдите.</span></li>
+          <li><span><b>Chrome:</b> значок «Установить» справа в адресной строке (монитор со стрелкой) или меню <span class="k">⋮</span> → «Сохранить и поделиться» → «Установить страницу как приложение».</span></li>
+          <li><span><b>Edge:</b> меню <span class="k">…</span> → «Приложения» → «Установить этот сайт как приложение».</span></li>
+          <li><span>Программа откроется в своём окне, значок появится на рабочем столе и в меню «Пуск».</span></li>
+        </ol>
+        <p class="note">На компьютере удобно смотреть отчёты, выгружать Excel и печатать акты и табели.</p>
+      </div>
+    </div>
+    <div class="phone" style="max-width:260px;justify-self:center"><img src="img/m-home.jpg" width="540" height="1168" alt="Так выглядит программа после установки" loading="lazy"></div>
+  </div>
+</div></section>
+
+<section id="offline"><div class="wrap">
+  <div class="sh"><div class="eyebrow">Без интернета</div><h2>Работает в кошаре и на пастбище</h2><p>Включать ничего не нужно: после первого входа программа и данные хранятся на устройстве. Записи без связи сохраняются сразу и уходят на сервер, когда связь появится.</p></div>
+  <div class="off">
+    <div class="st">
+      <div class="stat"><span class="pill"><i></i>синхронизировано</span><p>Всё отправлено, вы видите записи всех сотрудников.</p></div>
+      <div class="stat"><span class="pill w"><i></i>офлайн · ждёт отправки</span><p>Нет связи. Ваши записи сохранены на устройстве и уйдут сами.</p></div>
+      <div class="stat"><span class="pill w"><i></i>офлайн</span><p>Нет связи, неотправленных записей нет.</p></div>
+    </div>
+    <ul class="rules">
+      <li><b>Не выходите из учётной записи без интернета</b>Иначе неотправленные записи могут пропасть.</li>
+      <li><b>Не очищайте данные браузера</b>И не удаляйте значок, пока вверху «ждёт отправки».</li>
+      <li><b>Раз в день выходите на связь</b>Откройте программу на минуту — записи отправятся, а у вас появятся записи коллег.</li>
+    </ul>
+  </div>
+</div></section>
+
+<section id="faq" class="alt"><div class="wrap">
+  <div class="sh"><div class="eyebrow">Вопросы</div><h2>Частые вопросы</h2></div>
+  <div class="faq">
+    <details><summary>Сколько стоит и нужно ли что-то скачивать?</summary><p>Для сотрудников бесплатно. Скачивать из магазинов ничего не нужно: программа ставится из браузера и занимает несколько мегабайт.</p></details>
+    <details><summary>Подал заявку, а программа не открывается</summary><p>Это нормально: доступ появляется после того, как администратор назначит роль. Держите страницу открытой или зайдите позже — программа откроется сама.</p></details>
+    <details><summary>Забыл пароль</summary><p>Напишите администратору — он сбросит пароль, и вы зададите новый.</p></details>
+    <details><summary>Не вижу какой-то раздел или кнопку</summary><p>Разделы зависят от роли. Если вам нужен доступ к другим разделам — обратитесь к администратору.</p></details>
+    <details><summary>Пишет «Только просмотр», когда исправляю запись</summary><p>Ваша роль не может менять эту запись. Исправить её может администратор или управляющий.</p></details>
+    <details><summary>Как обновить программу?</summary><p>Обновления приходят сами. Если изменений не видно — закройте программу полностью и откройте снова при включённом интернете.</p></details>
+    <details><summary>Не пропадут ли данные?</summary><p>Все записи хранятся на сервере и на устройствах сотрудников. Если два человека без связи исправили одну карточку, останется исправление, отправленное последним; новые записи не теряются никогда.</p></details>
+  </div>
+</div></section>
+
+<div class="final"><div class="wrap">
+  <h2>Готовы начать?</h2>
+  <p class="muted">Войдите, если у вас уже есть учётная запись, или подайте заявку.</p>
+  <div class="cta"><a class="btn primary" href="../">Войти в программу</a><a class="btn" href="../?signup">Подать заявку</a></div>
+</div></div>
+</main>
+
+<footer><div class="wrap"><span>Берегиня — учёт и управление поголовьем</span><span>По вопросам доступа — к администратору хозяйства</span></div></footer>
+
+<script>
+// Вкладки установки; по умолчанию — под устройство посетителя
+(function(){
+  const tabs = [...document.querySelectorAll('[role=tab]')];
+  const show = id => tabs.forEach(t => { const on = t.id === id; t.setAttribute('aria-selected', on); document.getElementById(t.getAttribute('aria-controls')).hidden = !on; });
+  tabs.forEach(t => t.addEventListener('click', () => show(t.id)));
+  const ua = navigator.userAgent;
+  if(/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) show('t-ios');
+  else if(!/Android/.test(ua)) show('t-pc');
+  // Кнопка «Установить», если браузер это умеет
+  let ev = null;
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); ev = e; document.getElementById('installBox').style.display = 'block'; });
+  document.getElementById('installBtn').addEventListener('click', async () => { if(!ev) return; ev.prompt(); await ev.userChoice; ev = null; document.getElementById('installBox').style.display = 'none'; });
+  if('serviceWorker' in navigator) navigator.serviceWorker.register('../sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
