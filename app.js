@@ -157,7 +157,7 @@ function firebaseBackend(fs, db){
     newId(col){ return fs.doc(fs.collection(db, col)).id; },
     write(col, id, data, merge){ return merge ? fs.setDoc(fs.doc(db, col, id), conv(data), {merge:true}) : fs.setDoc(fs.doc(db, col, id), data); },
     remove(col, id){ return fs.deleteDoc(fs.doc(db, col, id)); },
-    watchDoc(col, id, next, fail){ return fs.onSnapshot(fs.doc(db, col, id), snap => next(snap.exists() ? {id:snap.id, ...snap.data()} : null, snap.metadata.fromCache), fail); },
+    watchDoc(col, id, next, fail){ return fs.onSnapshot(fs.doc(db, col, id), {includeMetadataChanges:true}, snap => next(snap.exists() ? {id:snap.id, ...snap.data()} : null, snap.metadata.fromCache), fail); },
     recent(col, n, next, fail){
       return fs.onSnapshot(fs.query(fs.collection(db, col), fs.orderBy('at', 'desc'), fs.limit(n)),
         snap => next(snap.docs.map(d => ({id:d.id, ...d.data()}))), fail);
@@ -294,12 +294,13 @@ async function boot(){
       let owner = null, got = false, live = false;
       // Данные открываются только владельцу или тому, кому администратор назначил роль; новая заявка ждёт одобрения
       const decide = () => {
-        if(owner === null || !got || S.uid !== user.uid) return;
+        if(S.uid !== user.uid || owner === null || (!owner && !got)) return;
         const ok = owner || (S.userRole && S.userRole !== 'pending' && ROLE[S.userRole]);
         if(ok){ if(!live){ live = true; attach(be); scheduleFeed(); scheduleGroups(); } applyRole(); render(); }
         else { if(live){ live = false; detachData(); } S.be = be; setMode('pending'); }
       };
       setMode('loading');
+      setTimeout(() => { if(!got && S.uid === user.uid){ try{ S.userRole = localStorage.getItem(rk) || ''; }catch(_){} got = true; decide(); } }, 6000);
       isAdminEmail(user.email).then(ok => { owner = ok; S.owner = ok; decide(); });
       S.roleUnsub = be.watchDoc('users', em, (d, fromCache) => {
         let r = d?.role || '';
