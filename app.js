@@ -106,7 +106,7 @@ function groupOf(a){
   const isYoungCat = /ягнен|козлен|малыш|молодняк|ягнят|козлят/.test(c);
   if(d!=null && d < YOUNG_DAYS && (!c || isYoungCat || /ярк|баранчик|козлик|козочк/.test(c))) return 'young';
   if(/суягн|сукозн|стельн/.test(c)) return 'preg';
-  if(/дойн/.test(c)) return 'milk';
+  if(/дойн|подсосн|лактир/.test(c)) return 'milk';
   if(/произв/.test(c)) return a.species==='goat' ? (a.sex==='m' && !/баран/.test(c) ? 'buck' : '') : 'ram';
   if(/кастрат|мяс|валух|откорм/.test(c)) return 'meat';
   if(/декор/.test(c)) return a.species==='sheep' ? 'deco' : '';
@@ -114,6 +114,21 @@ function groupOf(a){
   if(/ярк/.test(c)) return a.species==='goat' ? 'yarki' : 'repl';
   if(isYoungCat) return d==null ? (/ягнен|козлен|малыш/.test(c) ? 'young' : grownGroup(a)) : grownGroup(a);
   if(d!=null && d < YOUNG_DAYS) return 'young';
+  return penGroup(a);
+}
+// Если категория ничего не говорит — по названию загона («Ярки на осеменении», «Дойные», «Бараны мясо»…)
+function penGroup(a){
+  const l = String(penLabel(a.pen) || '').toLowerCase().replace(/ё/g,'е'); if(!l || /провер/.test(l)) return '';
+  const g = a.species === 'goat';
+  if(/мам|окотив/.test(l)) return a.sex === 'm' ? '' : 'milk';
+  if(/малыш|дети|козлят|ягнят/.test(l)) return 'young';
+  if(/дойн/.test(l)) return 'milk';
+  if(/суягн|сукозн|стельн|беремен/.test(l)) return 'preg';
+  if(/производ/.test(l)) return g ? (a.sex === 'm' ? 'buck' : '') : 'ram';
+  if(/мяс|кастрат/.test(l)) return 'meat';
+  if(/декор/.test(l)) return g ? '' : 'deco';
+  if(/ярк/.test(l)) return g ? 'yarki' : 'repl';
+  if(/ремонт|молодняк/.test(l)) return 'repl';
   return '';
 }
 const adult = a => { const g = groupOf(a); if(g==='young' || g==='repl' || g==='yarki') return false; const m = ageMonths(a.birth); return m != null ? m >= 8 : true; };
@@ -3590,7 +3605,8 @@ function buildImportPlan(sheets){
         continue;
       }
       if(!filled.length) continue;
-      const tagVal = row[cols.tag];
+      let tagVal = row[cols.tag];
+      if((tagVal == null || tagVal === '') && cols.cat != null && row[cols.cat] && filled.length >= 2 && !/загон/i.test(filled[0])) tagVal = 'б/н';
       // строка-раздел: «Загон № 3 Ярки» или «Карантин»
       if(tagVal == null || tagVal === ''){
         const first = filled[0];
@@ -3608,7 +3624,7 @@ function buildImportPlan(sheets){
           }
           continue;
         }
-        if(filled.some(t => /\d/.test(t)) && cols.cat != null && row[cols.cat]) issue('warn', where, 'Нет номера бирки — строка пропущена.');
+        if(filled.length === 1 && !/\d/.test(first)){ pen = null; penInfo = null; issue('info', where, `«${first}» — это не загон: животные ниже попадут «Без загона».`); continue; }
         continue;
       }
       const {tag, name, noTag} = splitTag(tagVal);
@@ -3672,6 +3688,23 @@ function buildImportPlan(sheets){
   return {animals, issues, pens, rations:rationsFound, births, missing};
 }
 
+// Замена всего стада: животные не из файла удаляются, история — только лечение (курсы, процедуры, результаты)
+const KEEP_EV = new Set(['ill', 'dose', 'result', 'task']);
+function replaceStat(plan, withGone){
+  const delA = [...plan.missing, ...(withGone ? S.animals.filter(a => a.status !== 'active') : [])];
+  const delSet = new Set(delA.map(a => a.id));
+  const delE = S.events.filter(e => !KEEP_EV.has(e.type) || (e.type !== 'task' && (e.animalIds || []).length && (e.animalIds || []).every(id => delSet.has(id) || !byId(id))));
+  return {delA, delSet, delE, treat:S.events.filter(e => e.type === 'ill' && !delE.includes(e)).length};
+}
+function applyHerdReplace(plan, opt){
+  const st = replaceStat(plan, opt.withGone);
+  st.delE.forEach(e => store.del('events', e.id));
+  const gone = new Set(st.delE.map(e => e.id));
+  S.events.filter(e => !gone.has(e.id) && (e.animalIds || []).some(id => st.delSet.has(id))).forEach(e => store.merge('events', e.id, {animalIds:(e.animalIds || []).filter(id => !st.delSet.has(id))}));
+  st.delA.forEach(a => store.del('animals', a.id));
+  const r = applyImportPlan(plan, {...opt, replace:true});
+  return {...r, delA:st.delA.length, delE:st.delE.length};
+}
 // Запись плана в базу
 function applyImportPlan(plan, opt){
   const list = plan.animals.filter(a => !a.skip);
@@ -3687,7 +3720,9 @@ function applyImportPlan(plan, opt){
     if(a.rationNo) data.rationNo = '№' + a.rationNo;
     if(a.motherTag){ const m = findId(a.motherTag, a.species); if(m) data.motherId = m; else data.motherText = a.motherTag; }
     if(a.fatherTag){ const f = findId(a.fatherTag, a.species); if(f) data.fatherId = f; else data.fatherText = a.fatherTag; }
-    if(a.existing){ store.merge('animals', ids[i], data); updated++; }
+    if(a.existing && opt.replace){ if(!data.sex) data.sex = a.existing.sex || 'f'; if(!data.since && data.pen && data.pen === a.existing.pen && a.existing.since) data.since = a.existing.since;
+      store.set('animals', ids[i], {...data, created:a.existing.created || Date.now(), source:'excel'}); updated++; }
+    else if(a.existing){ store.merge('animals', ids[i], data); updated++; }
     else { store.set('animals', ids[i], {...data, by:S.uid||null, byEmail:S.email||null, created:Date.now(), source:'excel'}); created++; }
     if(a.weight > 0) store.add('events', {animalIds:[ids[i]], type:'weight', date:a.since || today(), weight:round(a.weight, 1), note:'из Excel'});
   });
@@ -3704,7 +3739,7 @@ function applyImportPlan(plan, opt){
       store.set('animals', S.be.newId('animals'), {tag:k.tag, species:mom.species, sex:k.sex, status:'active', pen:mom.pen || '', birth:b.date, motherId:mid, cat: mom.species === 'goat' ? 'Козлёнок' : 'Ягнёнок', note:'из примечания об окоте', by:S.uid||null, byEmail:S.email||null, created:Date.now(), source:'excel'});
       kidsMade++;
     });
-    if(S.events.some(e => e.type === 'birth' && e.date === b.date && (e.animalIds||[]).includes(mid))) return;
+    if(!opt.replace && S.events.some(e => e.type === 'birth' && e.date === b.date && (e.animalIds||[]).includes(mid))) return;
     store.add('events', {animalIds:[mid], type:'birth', date:b.date, count:b.kids.length || b.kidTags.length, note:'из Excel: ' + mom.note});
     birthsMade++;
   });
@@ -3965,16 +4000,23 @@ function importSheet(){
           <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="im-labels" checked><span>Подписать загоны названиями из файла <span class="muted">(«Дойные», «Ярки»…)</span></span></label>
           ${plan.births.length ? `<label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="im-births" checked><span>Записать окоты из примечаний: ${plan.births.length}<br><span class="muted">Уже записанные окоты не повторяются. Детёныши, которых нет в списке строками, заводятся по примечанию («козел 346»).</span></span></label>` : ''}
         </div>
-        ${plan.missing.length ? `<div class="panel"><div class="eyebrow">Есть в приложении, но нет в файле: ${plan.missing.length}</div>
+        ${(() => { const st = replaceStat(plan, false), goneN = S.animals.filter(a => a.status !== 'active').length; return `<div class="panel" style="gap:8px"><label class="row pickrow" style="grid-template-columns:auto 1fr;align-items:start"><input type="checkbox" id="im-replace"><span><b>Заменить всё стадо данными файла</b><br><span class="muted">Удалится животных: ${st.delA.length} (нет в файле). Удалится история: ${st.delE.length} ${plural(st.delE.length, 'запись', 'записи', 'записей')} — окоты, вакцинации, обработки, взвешивания, случки. Останется только лечение (${st.treat}). Карточки перезапишутся по файлу: загон, группа, пол, дата рождения. Надои, склад и финансы не меняются.</span></span></label>
+          ${goneN ? `<label class="row pickrow" id="im-gonew" style="grid-template-columns:auto 1fr;align-items:start" hidden><input type="checkbox" id="im-gone"><span>Удалить и выбывших (продажа, забой, падёж): ${goneN}<br><span class="muted">Не ставьте, если нужен акт выбытия за прошлые месяцы.</span></span></label>` : ''}</div>`; })()}
+        ${plan.missing.length ? `<div class="panel" id="im-misspanel"><div class="eyebrow">Есть в приложении, но нет в файле: ${plan.missing.length}</div>
           <p class="muted" style="margin:0">${plan.missing.slice(0, 40).map(x => `${esc(x.tag)} (${esc(penShort(x.pen) || 'без загона')})`).join(', ')}${plan.missing.length > 40 ? '…' : ''}</p>
           <div class="field"><select id="im-missing">${opt('keep', 'Оставить как есть', 'keep')}${opt('nopen', 'Перевести «Без загона» — разберусь потом', '')}</select></div></div>` : ''}
         <div class="list">
         </div>
         <div class="actions"><button class="btn primary" id="imgo">Загрузить ${heads(list.length)}</button></div>`;
+      const repBox = res.querySelector('#im-replace');
+      if(repBox) repBox.onchange = () => { const on = repBox.checked; const mp = res.querySelector('#im-misspanel'); if(mp) mp.hidden = on; const gw = res.querySelector('#im-gonew'); if(gw) gw.hidden = !on; res.querySelector('#imgo').textContent = on ? `Заменить стадо: ${heads(list.length)}` : `Загрузить ${heads(list.length)}`; res.querySelector('#imgo').classList.toggle('danger', on); };
       res.querySelector('#imgo').onclick = () => {
+        const rep = res.querySelector('#im-replace')?.checked;
+        if(rep && !res.querySelector('#imgo').dataset.sure){ const b = res.querySelector('#imgo'); b.dataset.sure = '1'; b.textContent = 'Точно заменить? Нажмите ещё раз'; return; }
         const btn = res.querySelector('#imgo'); btn.disabled = true; btn.textContent = 'Загружаем…';
-        const r = silently(() => applyImportPlan(plan, {labels:res.querySelector('#im-labels')?.checked, births:res.querySelector('#im-births')?.checked, rations:res.querySelector('#im-rations')?.checked, missing:res.querySelector('#im-missing')?.value}));
-        journalNote(`Загрузка из Excel «${f.name}»: новых ${r.created}, обновлено ${r.updated}${r.birthsMade ? ', окотов ' + r.birthsMade : ''}${r.kidsMade ? ', детёнышей из примечаний ' + r.kidsMade : ''}${r.missingDone ? ', переведено «Без загона» ' + r.missingDone : ''}`);
+        const o = {labels:res.querySelector('#im-labels')?.checked, births:res.querySelector('#im-births')?.checked, rations:res.querySelector('#im-rations')?.checked, missing:rep ? 'keep' : res.querySelector('#im-missing')?.value, withGone:res.querySelector('#im-gone')?.checked};
+        const r = silently(() => rep ? applyHerdReplace(plan, o) : applyImportPlan(plan, o));
+        journalNote(`Загрузка из Excel «${f.name}»${rep ? ' с ЗАМЕНОЙ стада' : ''}: новых ${r.created}, обновлено ${r.updated}${r.birthsMade ? ', окотов ' + r.birthsMade : ''}${r.kidsMade ? ', детёнышей из примечаний ' + r.kidsMade : ''}${r.missingDone ? ', переведено «Без загона» ' + r.missingDone : ''}${rep ? `, удалено животных ${r.delA}, удалено записей истории ${r.delE}` : ''}`);
         toast(`Загружено: новых ${r.created + r.kidsMade}, обновлено ${r.updated}${r.birthsMade ? `, окотов ${r.birthsMade}` : ''}`);
         closeSheet(); S.herdMode = 'pens'; go('herd');
       };
@@ -3984,4 +4026,4 @@ function importSheet(){
 
 /* ===== Старт ===== */
 boot();
-window.OTARA = {S, PEN, feedUse, byId, itemById, rationById, purgeRations}; // для отладки
+window.OTARA = {S, PEN, feedUse, byId, itemById, rationById, purgeRations, store, groupOf}; // для отладки
