@@ -6,6 +6,7 @@ const BARNS = [
   {id:'o2', name:'Овчарня 2', short:'О2', pens:19},
   {id:'k',  name:'Козлятник', short:'К',  pens:10, extra:['1а']},
   {id:'q',  name:'Карантин',  short:'Кар', pens:10, quarantine:true},
+  {id:'p',  name:'Проход',    short:'Пр',  pens:1},
 ];
 // extra — дополнительные загоны с буквой (например «1а»), встают сразу после загона с тем же номером
 const PENS = BARNS.flatMap(b => Array.from({length:b.pens}, (_, i) => [
@@ -14,9 +15,9 @@ const PENS = BARNS.flatMap(b => Array.from({length:b.pens}, (_, i) => [
 ]).flat());
 const PEN = Object.fromEntries(PENS.map(p => [p.id, p]));
 const PEN_ORDER = Object.fromEntries(PENS.map((p, i) => [p.id, i]));
-const penShort = id => PEN[id] ? `${PEN[id].barn.name}, загон ${PEN[id].n}` : '';
-const penLong = id => PEN[id] ? `${PEN[id].barn.name}, загон ${PEN[id].n}` : 'Без загона';
-const penRationNo = id => String(S.pens.find(p => p.id===id)?.rationNo || '');
+const penShort = id => PEN[id] ? (PEN[id].barn.pens === 1 && !PEN[id].barn.extra ? PEN[id].barn.name : `${PEN[id].barn.name}, загон ${PEN[id].n}`) : '';
+const penLong = id => PEN[id] ? penShort(id) : 'Без загона';
+const penRationNo = id => { const p = S.pens.find(x => x.id===id); if(p?.rationNo) return String(p.rationNo); const r = p?.ration && S.rations.find(x => x.id === p.ration); return r ? (r.name.match(/№\s*(\d+)/)?.[1] || '') : ''; };
 const penLabel = id => (S.pens.find(p => p.id===id)?.label || '').trim();
 
 /* ===== Справочники ===== */
@@ -138,7 +139,8 @@ const byId = id => S.animals.find(a => a.id === id);
 const inPen = pid => S.animals.filter(a => a.status==='active' && (a.pen||'') === pid);
 const itemById = id => S.items.find(i => i.id === id);
 const rationById = id => S.rations.find(r => r.id === id);
-const RATIONS_ON = false;
+const RATIONS_ON = true;   // рационы считаются (Кормление)
+const FEED_AUTO = false;   // ежедневное автосписание кормов по рационам — выключено
 const penRation = pid => !RATIONS_ON ? null : rationById(S.pens.find(p => p.id === pid)?.ration);
 const setting = id => S.settings.find(s => s.id === id);
 const animalLabel = a => a ? `№${a.tag}${a.name?` «${a.name}»`:''}` : 'удалено';
@@ -408,7 +410,7 @@ let feedTimer = 0;
 function scheduleFeed(){ clearTimeout(feedTimer); feedTimer = setTimeout(processFeed, 1200); }
 function processFeed(){ silently(processFeedInner); }
 function processFeedInner(){
-  if(!RATIONS_ON){ purgeRations(); return; }
+  if(!RATIONS_ON || !FEED_AUTO) return;
   if(S.mode!=='live' || !ready('animals','pens','rations','feedauto','settings','items')) return;
   const st = setting('feed'); if(!st || !st.from || st.paused) return;
   const t = today(), {use} = feedUse(), has = Object.keys(use).length > 0;
@@ -500,7 +502,7 @@ function planItems(){
 const urgency = date => { const d = daysBetween(today(), date); return d < 0 ? 'over' : d <= 7 ? 'soon' : 'later'; };
 
 /* ===== Отрисовка ===== */
-const NAV_OF = {yplan:'more', genetics:'more', daily:'home', events:'home', plan:'home', vet:'herd', people:'more', feedsheet:'more', log:'more', home:'home', herd:'herd', pens:'herd', milk:'milk', stock:'stock', more:'more', money:'more', stats:'more'};
+const NAV_OF = {yplan:'more', genetics:'more', daily:'home', events:'home', plan:'home', vet:'herd', people:'more', feedsheet:'more', feeding:'more', log:'more', home:'home', herd:'herd', pens:'herd', milk:'milk', stock:'stock', more:'more', money:'more', stats:'more'};
 function updateClock(){ const c = $('#clock'); if(!c) return; const d = new Date(); c.innerHTML = `<b>${d.toLocaleDateString('ru-RU', {day:'numeric', month:'long', year:'numeric'}).replace(/\s*г\.?$/, '')}</b>${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 setInterval(updateClock, 30000);
 function render(){
@@ -521,7 +523,7 @@ function render(){
   $('#fab').hidden = !({herd:canCreate('herd') && S.herdMode!=='pens', milk:canCreate('milk'), stock: S.stockCat==='tech' ? canManage('fuel') : canCreate(catDomain(S.stockCat)), plan:canCreate('herd') || canCreate('vet'), money:canCreate('fin')})[S.tab];
   let html = '';
   if(S.demo) html += `<div class="banner">Демо-режим: всё хранится только в этом браузере.${S.animals.some(a => a.demo) ? ` Сейчас открыт пример хозяйства. <button class="link adm" data-act="clear-demo">Очистить пример</button>` : ''}</div>`;
-  html += ({yplan:yplanView, genetics:genView, daily:dailyView, log:logView, people:peopleView, feedsheet:feedSheetView, vet:vetView, events:eventsView, home: role==='feeder' ? feederHome : role==='mechanic' ? mechHome : homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
+  html += ({yplan:yplanView, genetics:genView, daily:dailyView, log:logView, people:peopleView, feedsheet:feedSheetView, feeding:feedingView, vet:vetView, events:eventsView, home: role==='feeder' ? feederHome : role==='mechanic' ? mechHome : homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
   const focus = document.activeElement?.id, pos = document.activeElement?.selectionStart;
   v.innerHTML = html;
   bindView();
@@ -666,6 +668,7 @@ function feederHome(){
     <div class="card quickcard"><div class="card-h"><h3>Корма</h3></div>
       <button class="qa b" data-fmv="out">${ico('feed')}Расход корма</button>
       <button class="qa g" data-fmv="in">${ico('plus')}Приход корма</button>
+      <button class="qa p" data-tab-go="feeding">${ico('feed')}Кормление: рационы</button>
       <button class="qa p" data-tab-go="feedsheet">${hico('report')}Табель кормления</button>
       <button class="qa t" data-nav="herd" data-hm2="pens">${ico('move')}Стадо по загонам</button></div>
     <div class="panel"><div class="kv"><span class="eyebrow">Остатки по складу</span><button class="link" data-nav="stock">Подробно</button></div>
@@ -1003,7 +1006,7 @@ const ROLE_DEF = {
   pending: {l:'Нет доступа (заявка)', d:'Новая заявка или отключённый сотрудник — программа не открывается'}
 };
 const VET_TYPES = new Set(['ill', 'vac', 'treat', 'vit', 'dose', 'result']);
-const ALL_TABS = ['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'plan', 'money', 'stats', 'feedsheet', 'yplan', 'genetics', 'daily'];
+const ALL_TABS = ['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'plan', 'money', 'stats', 'feedsheet', 'feeding', 'yplan', 'genetics', 'daily'];
 const ROLE = {
   admin:   {create:'*', edit:'*', manage:'*', tabs:[...ALL_TABS, 'log', 'people'], stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
   manager: {create:['herd', 'birth', 'manip', 'milk', 'feed', 'fuel', 'fin', 'plan'], edit:['herd', 'birth', 'manip', 'milk', 'feed', 'fuel', 'fin', 'plan'], manage:['herd', 'feed', 'fuel', 'plan'],
@@ -1011,7 +1014,7 @@ const ROLE = {
   foreman: {create:['herd', 'birth', 'vet', 'manip', 'milk', 'feed', 'fuel', 'fin', 'plan'], edit:[], manage:[], tabs:ALL_TABS, stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
   vet:     {create:['vet', 'birth', 'manip', 'milk', 'plan'], edit:['vet', 'manip', 'milk'], manage:['vet'], tabs:['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'daily', 'yplan', 'plan'], stock:['vet'],
             xl:['herd', 'births', 'events', 'milk', 'milkHeads', 'milkOut', 'vet']},
-  feeder:  {create:['feed', 'plan'], edit:['feed'], manage:['feed'], tabs:['home', 'herd', 'pens', 'stock', 'feedsheet', 'more'], stock:['feed'], xl:['feed', 'pens']},
+  feeder:  {create:['feed', 'plan'], edit:['feed'], manage:['feed'], tabs:['home', 'herd', 'pens', 'stock', 'feedsheet', 'feeding', 'more'], stock:['feed'], xl:['feed', 'pens']},
   mechanic:{create:['fuel', 'plan'], edit:['fuel'], manage:['fuel'], tabs:['home', 'stock', 'more'], stock:['fuel', 'tech'], xl:['fuel', 'tech']},
   viewer:  {create:[], edit:[], manage:[], tabs:ALL_TABS, stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
   pending: {create:[], edit:[], manage:[], tabs:[], stock:[], xl:[]}
@@ -1207,6 +1210,7 @@ function moreView(){
     canTab('vet') && row('vet', 'Ветеринария', 'Лечение по схемам, вакцинация, дегельминтизация'),
     canTab('yplan') && row('yplan', 'Годовой план и напоминания', 'Работа на год по месяцам, лаборатория, напоминания заранее'),
     canTab('genetics') && row('genetics', 'Генетика: подбор баранов', 'Родство, риск инбридинга, кого к какому барану'),
+    canTab('feeding') && row('feeding', 'Кормление', 'Рационы, назначение по загонам, сколько корма нужно в сутки'),
     canTab('feedsheet') && row('feedsheet', 'Табель кормления', 'Бланк по загонам — скачать в Excel и распечатать'),
     canTab('stock') && !canTab('herd') && row('', 'Склад', 'Остатки, приход, расход', 'data-nav="stock"'),
     canTab('money') && row('money', 'Финансы', 'Доходы и расходы по месяцам'),
@@ -1329,6 +1333,7 @@ function bindView(){
   on('[data-fin]', b => financeForm(S.finance.find(r => r.id===b.dataset.fin)));
   on('[data-m]', b => { const [y,m] = S.month.split('-').map(Number); S.month = iso(new Date(y, m-1+(+b.dataset.m), 1)).slice(0,7); render(); });
   on('[data-tab-go]', b => go(b.dataset.tabGo));
+  document.querySelectorAll('[data-penration]').forEach(sel => sel.onchange = () => { const pid = sel.dataset.penration; store.merge('pens', pid, {ration: sel.value || DEL, rationNo:DEL}); toast(sel.value ? `${penLong(pid)}: ${rationById(sel.value)?.name}` : `${penLong(pid)}: без рациона`); });
   { const dr = document.querySelector('#demo-role'); if(dr) dr.onchange = () => { S.demoRole = dr.value; S.admin = dr.value === 'admin'; applyRole(); render(); toast('Вы смотрите как: ' + ROLE_DEF[dr.value].l); }; }
   on('[data-fmv]', b => moveForm({cat:'feed', kind:b.dataset.fmv}));
   on('[data-fuelmv]', b => moveForm({cat:'fuel', kind:b.dataset.fuelmv}));
@@ -1362,7 +1367,7 @@ function bindView(){
   on('[data-act]', b => ({
     'add-animal':() => animalForm(), 'add-fin':() => financeForm(), 'add-ration':() => rationForm(),
     'add-item':() => itemForm({cat:S.stockCat}), 'add-routine':() => routineForm(null), 'seed-plan':seedPlan, 'plan-ics':planIcs, 'plan-xl':planXl, 'daily-xl':dailyXl, 'daily-share':dailyShare, 'add-scheme':() => schemeForm(null, S.vetKind), 'seed-scheme':seedScheme, 'veh-all-gsm':allToGsm, 'seed-items':seedItems, 'milkout':() => milkOutForm(),
-    'feed-log':feedLogSheet, akt:aktSheet, 'q-birth':() => eventForm({type:'birth'}), 'q-vet':() => eventForm({type:'vac'}), 'q-feed':() => moveForm({cat:'feed', kind:'in'}), 'q-fuel':() => moveForm({cat:'fuel', kind:'out'}), 'add-fuel':() => itemForm({cat:'fuel'}), 'add-vehicle':() => itemForm({cat:'vehicle'}), milkquick:() => milkQuickForm(S.milkDate||today(), defaultSession()), import:importSheet, regroup:() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); regroupSheet(ids, filterName(S.filter)); }, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
+    'feed-log':feedLogSheet, 'feeding-xl':feedingXl, 'ration-clear-old':clearOldRationNos, akt:aktSheet, 'q-birth':() => eventForm({type:'birth'}), 'q-vet':() => eventForm({type:'vac'}), 'q-feed':() => moveForm({cat:'feed', kind:'in'}), 'q-fuel':() => moveForm({cat:'fuel', kind:'out'}), 'add-fuel':() => itemForm({cat:'fuel'}), 'add-vehicle':() => itemForm({cat:'vehicle'}), milkquick:() => milkQuickForm(S.milkDate||today(), defaultSession()), import:importSheet, regroup:() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); regroupSheet(ids, filterName(S.filter)); }, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
     logout:() => fb && fb.au.signOut(fb.auth)
   })[b.dataset.act]?.());
 }
@@ -2401,7 +2406,8 @@ function penSheet(pid){
   const r = isPen ? penRation(pid) : null, pu = isPen ? feedUse().perPen[pid] : null;
   const body = `
     ${isPen ? `${fld('p-label','Назначение загона',`<input id="p-label" value="${esc(penLabel(pid))}" placeholder="напр. Дойные 2-разовые" autocomplete="off">`)}
-      ${fld('p-rno','Рацион загона (для табеля кормления)',`<select id="p-rno" ${canManage('feed') || canManage('herd') ? '' : 'disabled'}>${opt('', '— по списку животных —', penRationNo(pid))}${[1,2,3,4,5,6].map(n => opt(String(n), 'Рацион №' + n, penRationNo(pid))).join('')}</select>`)}
+      ${S.rations.length ? fld('p-ration','Рацион загона',`<select id="p-ration" ${canManage('feed') ? '' : 'disabled'}>${opt('', '— без рациона —', S.pens.find(x => x.id === pid)?.ration || '')}${S.rations.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru', {numeric:true})).map(x => opt(x.id, x.name, S.pens.find(y => y.id === pid)?.ration || '')).join('')}</select>`) + (pu ? `<p class="muted" style="margin:-6px 0 0">В сутки: ${Object.entries(pu.use).map(([k, q]) => `${esc(itemById(k)?.name || '')} ${num(round(q, 2))} ${esc(itemById(k)?.unit || '')}`).join(', ')}</p>` : '')
+        : (canTab('feeding') ? `<button type="button" class="link" data-tab-go="feeding" style="align-self:flex-start">Рационы — в разделе «Кормление»</button>` : '')}
 ` : ''}
     <div class="kv"><span class="eyebrow">Животные · ${list.length}</span>${list.length && canCreate('herd') ? `<button class="link" id="pall">Отметить всех</button>` : ''}</div>
     ${list.length && !canCreate('herd') ? `<div class="list scroll">${list.map(a => `<button class="row pickrow" data-go2="${a.id}" style="grid-template-columns:auto 1fr"><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'} · ${esc(groupName(a.species, groupOf(a)))}</span></button>`).join('')}</div>` : ''}
@@ -2411,8 +2417,9 @@ function penSheet(pid){
     ${isPen && canCreate('herd') ? `<div class="actions"><button class="btn" id="padd">Добавить животное в этот загон</button></div>` : ''}`;
   openSheet(isPen ? penLong(pid) : 'Без загона', body, s => {
     const rs = s.querySelector('#p-ration');
-    if(rs) rs.onchange = () => { store.merge('pens', pid, {ration: rs.value || null}); if(rs.value) ensureFeedStart(); toast(rs.value ? 'Рацион назначен' : 'Рацион снят'); setTimeout(() => penSheet(pid), 150); };
+    if(rs) rs.onchange = () => { store.merge('pens', pid, {ration: rs.value || DEL, rationNo:DEL}); toast(rs.value ? 'Рацион назначен' : 'Рацион снят'); setTimeout(() => penSheet(pid), 150); };
     const nr = s.querySelector('#newRation'); if(nr) nr.onclick = () => rationForm(null, [pid]);
+    s.querySelectorAll('[data-tab-go]').forEach(b => b.onclick = () => { closeSheet(); go(b.dataset.tabGo); });
     if(!canManage('herd')){ ['#p-label'].forEach(q => { const el = s.querySelector(q); if(el) el.disabled = true; }); }
     const rn = s.querySelector('#p-rno'); if(rn) rn.onchange = () => { store.merge('pens', pid, {rationNo: rn.value || DEL}); toast(rn.value ? `Загону назначен рацион №${rn.value}` : 'Рацион по списку животных'); };
     const pl = s.querySelector('#p-label');
@@ -2436,6 +2443,56 @@ function penSheet(pid){
   }, 'pen:'+pid);
 }
 
+
+/* ===== Кормление: рационы и назначение по загонам (без автосписания) ===== */
+function feedingView(){
+  let h = `<button class="back" data-tab-go="more">‹ Ещё</button><h2 class="page">Кормление</h2>`;
+  if(loading('pens', 'rations', 'items', 'animals')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
+  const ed = canManage('feed'), {use, perPen} = feedUse(), bal = stockBalance(), rs = S.rations.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru', {numeric:true}));
+  const penCount = r => PENS.filter(p => S.pens.find(x => x.id === p.id)?.ration === r.id), unit = id => itemById(id)?.unit || 'кг';
+  h += `<p class="muted" style="margin:0">Составьте рационы и назначьте их загонам — программа посчитает, сколько корма нужно в сутки и на сколько дней хватит остатков. Корма со склада сами не списываются: расход записывайте как обычно.</p>`;
+  h += `<div class="actions">${ed ? `<button class="btn primary" data-act="add-ration">+ Новый рацион</button>` : ''}<button class="btn" data-act="feeding-xl">Скачать план кормления</button></div>`;
+  // старые номера рационов (из Excel и табеля)
+  const oldPens = S.pens.filter(p => p.rationNo), oldAn = S.animals.filter(a => a.rationNo);
+  if(S.admin && (oldPens.length || oldAn.length)) h += `<div class="banner" style="display:grid;gap:8px"><span>Старые отметки «Рацион №…» из Excel и табеля: у ${heads(oldAn.length)}${oldPens.length ? ` и ${oldPens.length} ${plural(oldPens.length, 'загона', 'загонов', 'загонов')}` : ''}. Это просто номера без состава — после того как заведёте рационы здесь, их можно убрать.</span><button class="btn small" data-act="ration-clear-old" style="justify-self:start">Убрать старые номера</button></div>`;
+  h += `<div class="panel" style="gap:10px"><div class="eyebrow">Рационы · ${rs.length}</div>${rs.length ? rs.map(r => { const ps = penCount(r), n = ps.reduce((x, p) => x + inPen(p.id).length, 0);
+      return `<button class="row" data-ration="${r.id}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${esc(r.name)}</div><div class="sub" style="white-space:normal">${esc(rationText(r))}</div>
+        <div class="sub">${ps.length ? `${ps.length} ${plural(ps.length, 'загон', 'загона', 'загонов')} · ${heads(n)}` : 'не назначен ни одному загону'}</div></span><span class="side">›</span></button>`; }).join('')
+    : `<p class="muted" style="margin:0">Рационов пока нет.${ed ? ' Нажмите «+ Новый рацион»: название (например «Рацион №1 — дойные»), корма со склада и сколько на голову в сутки.' : ''}</p>`}</div>`;
+  // по загонам
+  h += `<div class="panel" style="gap:12px"><div class="eyebrow">Рационы по загонам</div>${BARNS.map(b => { const ps = PENS.filter(p => p.barn === b);
+      return `<div><div class="kv total"><span>${b.name}</span><strong>${heads(ps.reduce((x, p) => x + inPen(p.id).length, 0))}</strong></div>
+        ${ps.map(p => { const n = inPen(p.id).length, cur = S.pens.find(x => x.id === p.id)?.ration || '';
+          return `<div class="kv" style="align-items:center;gap:10px"><span style="min-width:0">${b.pens === 1 ? b.name : 'Загон ' + p.n}${penLabel(p.id) ? ` <span class="muted">· ${esc(penLabel(p.id))}</span>` : ''}<br><span class="muted">${n ? heads(n) : 'пусто'}${perPen[p.id] ? ' · ' + Object.entries(perPen[p.id].use).map(([k, q]) => `${esc(itemById(k)?.name || '')} ${num(round(q, 2))} ${esc(unit(k))}`).join(', ') : ''}</span></span>
+            ${ed && rs.length ? `<select data-penration="${p.id}" aria-label="Рацион: ${esc(penLong(p.id))}" style="max-width:46%">${opt('', '— без рациона —', cur)}${rs.map(r => opt(r.id, r.name, cur)).join('')}</select>` : `<strong>${esc(rationById(cur)?.name || '—')}</strong>`}</div>`; }).join('')}</div>`; }).join('')}</div>`;
+  // потребность
+  const need = Object.entries(use).filter(([, q]) => q > 0);
+  h += `<div class="panel"><div class="eyebrow">Нужно корма в сутки — по всем загонам</div>${need.length ? need.map(([k, q]) => { const b = bal[k] || 0, d = q > 0 ? Math.floor(b / q) : null;
+      return `<div class="kv"><span>${esc(itemById(k)?.name || 'удалённый корм')}<br><span class="muted">остаток ${num(round(b, 2))} ${esc(unit(k))}</span></span><strong class="${d != null && d < 10 ? 'money minus' : ''}">${num(round(q, 2))} ${esc(unit(k))}/сут<br><span class="muted" style="font-weight:400">${b <= 0 ? 'нет на складе' : `хватит на ${d} ${plural(d, 'день', 'дня', 'дней')}`}</span></strong></div>`; }).join('')
+    : '<p class="muted" style="margin:0">Появится, когда загонам будут назначены рационы.</p>'}</div>`;
+  return h;
+}
+function feedingXl(){
+  const {use, perPen} = feedUse(), bal = stockBalance();
+  const feeds = Object.keys(use).map(itemById).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  const rows = PENS.filter(p => inPen(p.id).length || S.pens.find(x => x.id === p.id)?.ration).map(p => { const pp = perPen[p.id], r = rationById(S.pens.find(x => x.id === p.id)?.ration);
+    return [p.barn.name, p.barn.pens === 1 ? '' : p.n, penLabel(p.id), inPen(p.id).length, r?.name || '', ...feeds.map(f => pp?.use[f.id] ? round(pp.use[f.id], 2) : '')]; });
+  rows.push(['Итого в сутки', '', '', PENS.reduce((x, p) => x + inPen(p.id).length, 0), '', ...feeds.map(f => round(use[f.id], 2))]);
+  rows.push(['Остаток на складе', '', '', '', '', ...feeds.map(f => round(bal[f.id] || 0, 2))]);
+  rows.push(['Хватит, дней', '', '', '', '', ...feeds.map(f => use[f.id] > 0 ? Math.max(0, Math.floor((bal[f.id] || 0) / use[f.id])) : '')]);
+  const sh = {name:'План кормления', title:`План кормления на ${fmtD(today())}`, note:'Количество в сутки по рационам, назначенным загонам',
+    cols:[{h:'Помещение', w:14}, {h:'Загон', w:7}, {h:'Назначение', w:26}, {h:'Голов', w:8, t:'i'}, {h:'Рацион', w:22}, ...feeds.map(f => ({h:`${f.name}, ${f.unit}`, w:12, t:'n'}))], rows};
+  const comp = {name:'Рационы', title:'Состав рационов', cols:[{h:'Рацион', w:26}, {h:'Корм', w:24}, {h:'Количество', w:12, t:'n'}, {h:'Ед.', w:6}, {h:'Норма', w:16}],
+    rows:S.rations.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru', {numeric:true})).flatMap(r => (r.items || []).map(x => [r.name, itemById(x.item)?.name || '', +x.qty, itemById(x.item)?.unit || '', r.mode === 'pen' ? 'на загон в сутки' : 'на голову в сутки']))};
+  saveFile(`План кормления ${today()}.xlsx`, XL.build([sh, comp])).then(ok => ok && toast('План кормления сохранён в «Загрузки»'));
+}
+function clearOldRationNos(){
+  const ps = S.pens.filter(p => p.rationNo), an = S.animals.filter(a => a.rationNo);
+  silently(() => { ps.forEach(p => store.merge('pens', p.id, {rationNo:DEL})); an.forEach(a => store.merge('animals', a.id, {rationNo:DEL})); });
+  journalNote(`Убраны старые номера рационов: у ${heads(an.length)} и ${ps.length} загонов`);
+  toast('Старые номера рационов убраны');
+}
+
 /* ----- Рацион ----- */
 function rationForm(r, prePens){
   const feeds = S.items.filter(i => i.cat==='feed').sort((a,b) => a.name.localeCompare(b.name,'ru'));
@@ -2447,11 +2504,11 @@ function rationForm(r, prePens){
     return;
   }
   const rowHtml = (x) => `<div class="irow"><select name="ri" aria-label="Корм">${opt('','— корм —',x.item)}${feeds.map(i => opt(i.id, `${i.name}, ${i.unit}`, x.item)).join('')}</select>
-    <input name="rq" inputmode="decimal" placeholder="кол-во" value="${esc(x.qty)}" aria-label="Количество" autocomplete="off"><button type="button" class="x" data-rm aria-label="Убрать">×</button></div>`;
+    <input name="rq" inputmode="decimal" placeholder="напр. 0,5" value="${esc(x.qty)}" aria-label="Количество" autocomplete="off"><button type="button" class="x" data-rm aria-label="Убрать">×</button></div>`;
   const body = `<form id="rf" novalidate>
-    ${fld('r-name','Название *',`<input id="r-name" name="name" value="${esc(v.name)}" placeholder="напр. Дойные козы" autocomplete="off">`)}
+    ${fld('r-name','Название *',`<input id="r-name" name="name" value="${esc(v.name)}" placeholder="напр. Рацион №1 — дойные" autocomplete="off">`)}
     <div class="field"><label>Норма считается</label><div class="seg"><label><input type="radio" name="mode" value="head" ${v.mode!=='pen'?'checked':''}>на голову в сутки</label><label><input type="radio" name="mode" value="pen" ${v.mode==='pen'?'checked':''}>на загон в сутки</label></div></div>
-    <div class="field"><label>Состав</label><div id="rrows" style="display:flex;flex-direction:column;gap:6px">${(v.items.length ? v.items : [{item:'',qty:''}]).map(rowHtml).join('')}</div>
+    <div class="field"><label>Состав <span class="muted">— в единицах склада (обычно кг; 0,25 = 250 г)</span></label><div id="rrows" style="display:flex;flex-direction:column;gap:6px">${(v.items.length ? v.items : [{item:'',qty:''}]).map(rowHtml).join('')}</div>
       <button type="button" class="link" id="radd" style="align-self:flex-start;margin-top:6px">+ Добавить корм</button></div>
     <div class="field"><label>Загоны с этим рационом</label>
       ${BARNS.map(b => `<div class="pgroup"><span class="muted">${b.name}</span><div class="pchips">${PENS.filter(p => p.barn===b).map(p => {
@@ -2492,11 +2549,10 @@ function rationForm(r, prePens){
         if(want.has(p.id) && cur!==id) store.merge('pens', p.id, {ration:id});
         else if(!want.has(p.id) && cur===id) store.merge('pens', p.id, {ration:null});
       });
-      if(want.size) ensureFeedStart();
       toast(r ? 'Рацион сохранён' : 'Рацион создан'); closeSheet();
     };
     const del = s.querySelector('#rdel');
-    if(del) del.onclick = () => askConfirm(s.querySelector('#rdelc'), 'Удалить рацион? Загоны останутся без рациона, корм для них перестанет списываться. Прошлые списания сохранятся.',
+    if(del) del.onclick = () => askConfirm(s.querySelector('#rdelc'), 'Удалить рацион? Загоны, которым он назначен, останутся без рациона.',
       () => { S.pens.filter(p => p.ration===r.id).forEach(p => store.merge('pens', p.id, {ration:null})); store.del('rations', r.id); toast('Рацион удалён'); closeSheet(); });
   }, 'rform');
 }
@@ -3611,7 +3667,7 @@ function buildImportPlan(sheets){
       if(tagVal == null || tagVal === ''){
         const first = filled[0];
         const b = barnByText(first);
-        if(b && filled.length === 1){ barn = b; pen = null; penInfo = null; continue; }
+        if(b && filled.length === 1){ barn = b; pen = b.pens === 1 && !b.extra ? `${b.id}-1` : null; penInfo = null; continue; }
         const pi = /загон/i.test(first) ? parsePenText(first) : null;
         if(pi){
           penInfo = pi; pen = penIdFor(barn, pi.n, pi.letter);
