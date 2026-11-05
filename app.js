@@ -905,10 +905,14 @@ function regroupSheet(ids, title){
 }
 
 /* ----- Загоны ----- */
+const isKg = id => /^кг$/i.test(String(itemById(id)?.unit || 'кг').trim());
+const rationGrams = r => (r.items || []).filter(x => x.item && isKg(x.item)).reduce((t, x) => t + (+x.qty || 0) * 1000, 0);
 function rationText(r){
   const unitOf = id => itemById(id)?.unit || 'кг';
-  const parts = (r.items||[]).filter(x => x.item).map(x => `${itemById(x.item)?.name || 'удалён'} ${num(x.qty,2)} ${unitOf(x.item)}`);
-  return (parts.join(' · ') || 'состав не указан') + (r.mode==='pen' ? ' — на загон в сутки' : ' — на голову в сутки');
+  const tot = rationGrams(r);
+  const parts = (r.items||[]).filter(x => x.item).map(x => { const g = isKg(x.item) ? +x.qty * 1000 : null;
+    return `${itemById(x.item)?.name || 'удалён'} ${g != null ? num(round(g, 0)) + ' г' : num(x.qty,2) + ' ' + unitOf(x.item)}${g != null && tot > 0 ? ` (${num(round(g / tot * 100, 1))}%)` : ''}`; });
+  return (parts.join(' · ') || 'состав не указан') + (tot > 0 ? ` · всего ${num(round(tot, 0))} г` : '') + (r.mode==='pen' ? ' — на загон в сутки' : ' — на голову в сутки');
 }
 function pensView(){
   if(loading('pens','rations')) return `<div class="empty"><p>Загружаем…</p></div>`;
@@ -2482,8 +2486,9 @@ function feedingXl(){
   rows.push(['Хватит, дней', '', '', '', '', ...feeds.map(f => use[f.id] > 0 ? Math.max(0, Math.floor((bal[f.id] || 0) / use[f.id])) : '')]);
   const sh = {name:'План кормления', title:`План кормления на ${fmtD(today())}`, note:'Количество в сутки по рационам, назначенным загонам',
     cols:[{h:'Помещение', w:14}, {h:'Загон', w:7}, {h:'Назначение', w:26}, {h:'Голов', w:8, t:'i'}, {h:'Рацион', w:22}, ...feeds.map(f => ({h:`${f.name}, ${f.unit}`, w:12, t:'n'}))], rows};
-  const comp = {name:'Рационы', title:'Состав рационов', cols:[{h:'Рацион', w:26}, {h:'Корм', w:24}, {h:'Количество', w:12, t:'n'}, {h:'Ед.', w:6}, {h:'Норма', w:16}],
-    rows:S.rations.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru', {numeric:true})).flatMap(r => (r.items || []).map(x => [r.name, itemById(x.item)?.name || '', +x.qty, itemById(x.item)?.unit || '', r.mode === 'pen' ? 'на загон в сутки' : 'на голову в сутки']))};
+  const comp = {name:'Рационы', title:'Состав рационов', cols:[{h:'Рацион', w:26}, {h:'Корм', w:24}, {h:'%', w:8, t:'n'}, {h:'Граммов', w:10, t:'n'}, {h:'Количество', w:12, t:'n'}, {h:'Ед.', w:6}, {h:'Норма', w:16}],
+    rows:S.rations.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru', {numeric:true})).flatMap(r => { const tot = rationGrams(r); return [...(r.items || []).map(x => { const g = isKg(x.item) ? round(+x.qty * 1000, 1) : '';
+      return [r.name, itemById(x.item)?.name || '', g !== '' && tot > 0 ? round(g / tot * 100, 1) : '', g, +x.qty, itemById(x.item)?.unit || '', r.mode === 'pen' ? 'на загон в сутки' : 'на голову в сутки']; }), [r.name, 'Итого', tot > 0 ? 100 : '', tot > 0 ? round(tot, 1) : '', '', '', '']]; })};
   saveFile(`План кормления ${today()}.xlsx`, XL.build([sh, comp])).then(ok => ok && toast('План кормления сохранён в «Загрузки»'));
 }
 function clearOldRationNos(){
@@ -2503,12 +2508,16 @@ function rationForm(r, prePens){
       s => s.querySelector('#toStock').onclick = () => { closeSheet(); S.stockCat = 'feed'; go('stock'); }, 'rform');
     return;
   }
-  const rowHtml = (x) => `<div class="irow"><select name="ri" aria-label="Корм">${opt('','— корм —',x.item)}${feeds.map(i => opt(i.id, `${i.name}, ${i.unit}`, x.item)).join('')}</select>
-    <input name="rq" inputmode="decimal" placeholder="напр. 0,5" value="${esc(x.qty)}" aria-label="Количество" autocomplete="off"><button type="button" class="x" data-rm aria-label="Убрать">×</button></div>`;
+  const g0 = x => x.item && x.qty !== '' && isKg(x.item) ? round(+x.qty * 1000, 1) : x.qty;
+  const tot0 = r ? rationGrams(r) : 0;
+  const rowHtml = (x) => `<div class="irow" style="grid-template-columns:1fr 64px 76px auto"><select name="ri" aria-label="Корм">${opt('','— корм —',x.item)}${feeds.map(i => opt(i.id, `${i.name}, ${i.unit}`, x.item)).join('')}</select>
+    <input name="rp%" inputmode="decimal" placeholder="%" value="${x.item && tot0 > 0 && isKg(x.item) ? esc(String(round(+x.qty * 1000 / tot0 * 100, 1)).replace('.', ',')) : ''}" aria-label="Процент корма" autocomplete="off">
+    <input name="rq" inputmode="decimal" placeholder="г" value="${esc(String(g0(x)).replace('.', ','))}" aria-label="Граммов" autocomplete="off"><button type="button" class="x" data-rm aria-label="Убрать">×</button></div>`;
   const body = `<form id="rf" novalidate>
     ${fld('r-name','Название *',`<input id="r-name" name="name" value="${esc(v.name)}" placeholder="напр. Рацион №1 — дойные" autocomplete="off">`)}
     <div class="field"><label>Норма считается</label><div class="seg"><label><input type="radio" name="mode" value="head" ${v.mode!=='pen'?'checked':''}>на голову в сутки</label><label><input type="radio" name="mode" value="pen" ${v.mode==='pen'?'checked':''}>на загон в сутки</label></div></div>
-    <div class="field"><label>Состав <span class="muted">— в единицах склада (обычно кг; 0,25 = 250 г)</span></label><div id="rrows" style="display:flex;flex-direction:column;gap:6px">${(v.items.length ? v.items : [{item:'',qty:''}]).map(rowHtml).join('')}</div>
+    ${fld('r-tot','Всего на голову в сутки, г',`<input id="r-tot" inputmode="decimal" value="${tot0 ? esc(String(round(tot0, 1)).replace('.', ',')) : ''}" placeholder="напр. 700 — тогда достаточно вписать %" autocomplete="off">`)}
+    <div class="field"><label>Состав <span class="muted">— корм · % · граммы (для кормов не в кг — в их единицах)</span></label><div id="rrows" style="display:flex;flex-direction:column;gap:6px">${(v.items.length ? v.items : [{item:'',qty:''}]).map(rowHtml).join('')}</div>
       <button type="button" class="link" id="radd" style="align-self:flex-start;margin-top:6px">+ Добавить корм</button></div>
     <div class="field"><label>Загоны с этим рационом</label>
       ${BARNS.map(b => `<div class="pgroup"><span class="muted">${b.name}</span><div class="pchips">${PENS.filter(p => p.barn===b).map(p => {
@@ -2523,7 +2532,20 @@ function rationForm(r, prePens){
   </form>`;
   openSheet(r ? `Рацион «${r.name}»` : 'Новый рацион', body, s => {
     const f = s.querySelector('#rf'), rows = s.querySelector('#rrows');
-    const read = () => [...rows.querySelectorAll('.irow')].map(x => ({item:x.querySelector('[name=ri]').value, qty:dec(x.querySelector('[name=rq]').value)})).filter(x => x.item && x.qty > 0);
+    // граммы ↔ проценты: правите граммы — пересчитываются %, правите % — граммы от «Всего»
+    const totEl = s.querySelector('#r-tot'), fmtN = v => String(round(v, 1)).replace('.', ',');
+    const recalcPct = () => { const rs = [...rows.querySelectorAll('.irow')], tot = rs.reduce((t, x) => t + (isKg(x.querySelector('[name=ri]').value) ? (dec(x.querySelector('[name=rq]').value) || 0) : 0), 0);
+      if(document.activeElement !== totEl) totEl.value = tot ? fmtN(tot) : '';
+      rs.forEach(x => { const id = x.querySelector('[name=ri]').value, g = dec(x.querySelector('[name=rq]').value) || 0, pe = x.querySelector('[name="rp%"]'); if(pe !== document.activeElement) pe.value = id && isKg(id) && tot > 0 && g > 0 ? fmtN(g / tot * 100) : ''; }); };
+    const fromPct = () => { const tot = dec(totEl.value) || 0; if(!(tot > 0)) return;
+      rows.querySelectorAll('.irow').forEach(x => { const pe = x.querySelector('[name="rp%"]'), pc = dec(pe.value); if(pc > 0 && isKg(x.querySelector('[name=ri]').value)) x.querySelector('[name=rq]').value = fmtN(tot * pc / 100); }); };
+    let pctMode = false; // вписывают % от «Всего» — тогда «Всего» не пересчитывается
+    rows.addEventListener('input', ev => { if(ev.target.name === 'rq'){ pctMode = false; recalcPct(); } else if(ev.target.name === 'rp%'){ pctMode = true; fromPct(); } });
+    totEl.addEventListener('input', () => { pctMode = true; fromPct(); });
+    rows.addEventListener('change', ev => { if(ev.target.name === 'ri') (pctMode ? fromPct : recalcPct)(); });
+    rows.addEventListener('click', ev => { if(ev.target.closest('[data-rm]')) setTimeout(() => (pctMode ? fromPct : recalcPct)(), 0); });
+    const read = () => [...rows.querySelectorAll('.irow')].map(x => { const item = x.querySelector('[name=ri]').value, v = dec(x.querySelector('[name=rq]').value);
+      return {item, qty: item && isKg(item) ? v / 1000 : v}; }).filter(x => x.item && x.qty > 0);
     const sum = () => {
       const its = read(), mode = f.querySelector('input[name=mode]:checked').value;
       const pens = [...f.querySelectorAll('input[name=rp]:checked')].map(c => c.value);
@@ -2539,8 +2561,9 @@ function rationForm(r, prePens){
       ev.preventDefault();
       const name = f.querySelector('#r-name').value.trim(), its = read(), err = s.querySelector('#rerr');
       if(!name){ err.hidden = false; err.textContent = 'Укажите название рациона.'; return; }
-      if(!its.length){ err.hidden = false; err.textContent = 'Добавьте хотя бы один корм с количеством.'; return; }
-      const data = {name, mode:f.querySelector('input[name=mode]:checked').value, items:its.map(x => ({item:x.item, qty:round(x.qty,3)}))};
+      if(!its.length){ err.hidden = false; err.textContent = 'Добавьте хотя бы один корм с количеством (граммы или % при заполненном «Всего»).'; return; }
+      const gsum = its.filter(x => isKg(x.item)).reduce((t, x) => t + x.qty, 0);
+      const data = {name, mode:f.querySelector('input[name=mode]:checked').value, items:its.map(x => ({item:x.item, qty:round(x.qty,4), ...(isKg(x.item) && gsum > 0 ? {pct:round(x.qty / gsum * 100, 1)} : {})}))};
       let id = r?.id;
       if(r) store.set('rations', r.id, {...strip(r), ...data}); else id = store.add('rations', data);
       const want = new Set([...f.querySelectorAll('input[name=rp]:checked')].map(c => c.value));
