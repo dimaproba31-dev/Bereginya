@@ -337,7 +337,7 @@ function attach(be){
   detachData(); S.be = be; S.loaded = {}; S.pending = {};
   for(const c of COLS){
     unsubs.push(be.subscribe(c, (docs, pend) => {
-      S[c] = docs; S.loaded[c] = 1; S.pending[c] = !!pend;
+      S[c] = c === 'rations' ? docs.filter(d => !d.deleted) : docs; S.loaded[c] = 1; S.pending[c] = !!pend;
       updateSync(); scheduleRender(); scheduleFeed(); if(c==='animals') scheduleGroups(); migrateUsers();
     }, err => { if(err && err.code==='permission-denied') setMode('denied'); }));
   }
@@ -436,6 +436,7 @@ function processFeedInner(){
   });
 }
 function purgeRations(){
+  return; // больше не используется: рационы удалять нельзя (старые версии программы стирали их)
   if(S.mode!=='live' || !S.admin || !ready('pens','rations','feedauto','settings')) return;
   const nf = S.feedauto.length, nr = S.rations.length, pens = S.pens.filter(p => p.ration);
   if(!nf && !nr && !pens.length && !setting('feed')) return;
@@ -1351,7 +1352,7 @@ function bindView(){
   on('[data-fin]', b => financeForm(S.finance.find(r => r.id===b.dataset.fin)));
   on('[data-m]', b => { const [y,m] = S.month.split('-').map(Number); S.month = iso(new Date(y, m-1+(+b.dataset.m), 1)).slice(0,7); render(); });
   on('[data-tab-go]', b => go(b.dataset.tabGo));
-  document.querySelectorAll('[data-penration]').forEach(sel => sel.onchange = () => { const pid = sel.dataset.penration; store.merge('pens', pid, {ration: sel.value || DEL, rationNo:DEL}); toast(sel.value ? `${penLong(pid)}: ${rationById(sel.value)?.name}` : `${penLong(pid)}: без рациона`); });
+  document.querySelectorAll('[data-penration]').forEach(sel => sel.onchange = () => { const pid = sel.dataset.penration; store.merge('pens', pid, {ration: sel.value || '', rationNo:DEL}); toast(sel.value ? `${penLong(pid)}: ${rationById(sel.value)?.name}` : `${penLong(pid)}: без рациона`); });
   { const dr = document.querySelector('#demo-role'); if(dr) dr.onchange = () => { S.demoRole = dr.value; S.admin = dr.value === 'admin'; applyRole(); render(); toast('Вы смотрите как: ' + ROLE_DEF[dr.value].l); }; }
   on('[data-fmv]', b => moveForm({cat:'feed', kind:b.dataset.fmv}));
   on('[data-fuelmv]', b => moveForm({cat:'fuel', kind:b.dataset.fuelmv}));
@@ -2435,7 +2436,7 @@ function penSheet(pid){
     ${isPen && canCreate('herd') ? `<div class="actions"><button class="btn" id="padd">Добавить животное в этот загон</button></div>` : ''}`;
   openSheet(isPen ? penLong(pid) : 'Без загона', body, s => {
     const rs = s.querySelector('#p-ration');
-    if(rs) rs.onchange = () => { store.merge('pens', pid, {ration: rs.value || DEL, rationNo:DEL}); toast(rs.value ? 'Рацион назначен' : 'Рацион снят'); setTimeout(() => penSheet(pid), 150); };
+    if(rs) rs.onchange = () => { store.merge('pens', pid, {ration: rs.value || '', rationNo:DEL}); toast(rs.value ? 'Рацион назначен' : 'Рацион снят'); setTimeout(() => penSheet(pid), 150); };
     const nr = s.querySelector('#newRation'); if(nr) nr.onclick = () => rationForm(null, [pid]);
     s.querySelectorAll('[data-tab-go]').forEach(b => b.onclick = () => { closeSheet(); go(b.dataset.tabGo); });
     if(!canManage('herd')){ ['#p-label'].forEach(q => { const el = s.querySelector(q); if(el) el.disabled = true; }); }
@@ -2587,13 +2588,13 @@ function rationForm(r, prePens){
       PENS.forEach(p => {
         const cur = S.pens.find(x => x.id===p.id)?.ration;
         if(want.has(p.id) && cur!==id) store.merge('pens', p.id, {ration:id});
-        else if(!want.has(p.id) && cur===id) store.merge('pens', p.id, {ration:null});
+        else if(!want.has(p.id) && cur===id) store.merge('pens', p.id, {ration:''});
       });
       toast(r ? 'Рацион сохранён' : 'Рацион создан'); closeSheet();
     };
     const del = s.querySelector('#rdel');
     if(del) del.onclick = () => askConfirm(s.querySelector('#rdelc'), 'Удалить рацион? Загоны, которым он назначен, останутся без рациона.',
-      () => { S.pens.filter(p => p.ration===r.id).forEach(p => store.merge('pens', p.id, {ration:null})); store.del('rations', r.id); toast('Рацион удалён'); closeSheet(); });
+      () => { S.pens.filter(p => p.ration===r.id).forEach(p => store.merge('pens', p.id, {ration:''})); store.merge('rations', r.id, {deleted:true}); toast('Рацион удалён'); closeSheet(); });
   }, 'rform');
 }
 
