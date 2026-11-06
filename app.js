@@ -140,7 +140,7 @@ const inPen = pid => S.animals.filter(a => a.status==='active' && (a.pen||'') ==
 const itemById = id => S.items.find(i => i.id === id);
 const rationById = id => S.rations.find(r => r.id === id);
 const RATIONS_ON = true;   // рационы считаются (Кормление)
-const FEED_AUTO = false;   // ежедневное автосписание кормов по рационам — выключено
+const FEED_AUTO = true;    // ежедневное автосписание кормов по рационам: расходом склада (moves, auto:true)
 const penRation = pid => !RATIONS_ON ? null : rationById(S.pens.find(p => p.id === pid)?.ration);
 const setting = id => S.settings.find(s => s.id === id);
 const animalLabel = a => a ? `№${a.tag}${a.name?` «${a.name}»`:''}` : 'удалено';
@@ -409,17 +409,31 @@ const sameMap = (a, b) => { const ka = Object.keys(a), kb = Object.keys(b); retu
 let feedTimer = 0;
 function scheduleFeed(){ clearTimeout(feedTimer); feedTimer = setTimeout(processFeed, 1200); }
 function processFeed(){ silently(processFeedInner); }
+// Автосписание: за каждый день — расход склада по рационам (moves с id ra-ДАТА-корм, auto:true).
+// Метка дня feedauto/d-ДАТА: прошлый день с меткой больше не пересчитывается; сегодняшний пересчитывается, пока его не правили вручную.
 function processFeedInner(){
   if(!RATIONS_ON || !FEED_AUTO) return;
-  if(S.mode!=='live' || !ready('animals','pens','rations','feedauto','settings','items')) return;
-  const st = setting('feed'); if(!st || !st.from || st.paused) return;
+  if(S.mode!=='live' || !canEdit('feed') || !ready('animals','pens','rations','feedauto','settings','items','moves')) return;
   const t = today(), {use} = feedUse(), has = Object.keys(use).length > 0;
+  let st = setting('feed');
+  if(!st || !st.from){ if(!has) return; silently(() => store.set('settings', 'feed', {from:t, paused:false})); st = {from:t}; }
+  if(st.paused) return;
   let d = st.from; const min = addDays(t, -60); if(d < min) d = min;
-  for(let n = 0; d <= t && n < 70; d = addDays(d, 1)){
-    const id = 'd-' + d, ex = S.feedauto.find(x => x.id===id);
-    if(!ex){ if(has){ store.set('feedauto', id, {date:d, items:use}); n++; } }
-    else if(S.admin && d===t && !ex.locked && !ex.skipped && !sameMap(ex.items||{}, use)){ store.set('feedauto', id, {...strip(ex), items:use}); n++; }
-  }
+  silently(() => {
+    for(; d <= t; d = addDays(d, 1)){
+      const mid = 'd-' + d, mk = S.feedauto.find(x => x.id === mid);
+      if(mk && (d !== t || mk.locked || mk.skipped)) continue;
+      if(!mk && !has) continue;
+      for(const [item, q] of Object.entries(use)){
+        const id = `ra-${d}-${item}`, ex = S.moves.find(m => m.id === id), qty = round(q, 3);
+        if(!ex){ if(!mk || d === t) store.set('moves', id, {item, kind:'out', qty, date:d, auto:true, note:'Кормление по рационам'}); }
+        else if(d === t && !ex.manual && Math.abs((+ex.qty || 0) - qty) > 1e-6) store.merge('moves', id, {qty});
+      }
+      if(d === t) S.moves.filter(m => m.auto && m.date === t && !m.manual && !use[m.item]).forEach(m => store.del('moves', m.id));
+      if(!mk) store.set('feedauto', mid, {date:d, items:use});
+      else if(!sameMap(mk.items || {}, use)) store.set('feedauto', mid, {...strip(mk), items:use});
+    }
+  });
 }
 function purgeRations(){
   if(S.mode!=='live' || !S.admin || !ready('pens','rations','feedauto','settings')) return;
@@ -2454,7 +2468,10 @@ function feedingView(){
   if(loading('pens', 'rations', 'items', 'animals')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
   const ed = canManage('feed'), {use, perPen} = feedUse(), bal = stockBalance(), rs = S.rations.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru', {numeric:true}));
   const penCount = r => PENS.filter(p => S.pens.find(x => x.id === p.id)?.ration === r.id), unit = id => itemById(id)?.unit || 'кг';
-  h += `<p class="muted" style="margin:0">Составьте рационы и назначьте их загонам — программа посчитает, сколько корма нужно в сутки и на сколько дней хватит остатков. Корма со склада сами не списываются: расход записывайте как обычно.</p>`;
+  const fst = setting('feed') || {};
+  h += `<p class="muted" style="margin:0">Составьте рационы и назначьте их загонам. Каждый день программа сама списывает корм со склада расходом по рационам и числу голов в загонах.</p>
+    <div class="banner" style="display:grid;gap:8px"><span>${fst.paused ? '<b>Автосписание на паузе.</b> Корм по рационам не списывается.' : fst.from ? `<b>Автосписание включено</b> с ${fmtD(fst.from)}. Сегодняшнее списание пересчитывается, если поменяете рационы или переведёте животных.` : '<b>Автосписание</b> начнётся, как только загонам будут назначены рационы.'}</span>
+      <span class="actions" style="margin:0"><button class="btn small" data-act="feed-log">Журнал списаний</button>${canManage('feed') && fst.from ? `<button class="btn small" data-act="feed-pause">${fst.paused ? 'Возобновить с сегодня' : 'Поставить на паузу'}</button>` : ''}</span></div>`;
   h += `<div class="actions">${ed ? `<button class="btn primary" data-act="add-ration">+ Новый рацион</button>` : ''}<button class="btn" data-act="feeding-xl">Скачать план кормления</button></div>`;
   // старые номера рационов (из Excel и табеля)
   const oldPens = S.pens.filter(p => p.rationNo), oldAn = S.animals.filter(a => a.rationNo);
@@ -2714,7 +2731,7 @@ function moveForm(m){
       if(d.kind==='out' && d.vehicle) data.vehicle = d.vehicle;
       if(d.kind==='out' && (d.who||'').trim()) data.who = d.who.trim();
       if(d.kind==='in' && price) data.price = price;
-      if(isEdit){ const old = strip(m); if(!data.vehicle) delete old.vehicle; if(!data.who) delete old.who; store.set('moves', m.id, {...old, ...data, price: m.price ?? null}); }
+      if(isEdit){ const old = strip(m); if(!data.vehicle) delete old.vehicle; if(!data.who) delete old.who; store.set('moves', m.id, {...old, ...data, price: m.price ?? null, ...(m.auto ? {manual:true} : {})}); }
       else {
         store.add('moves', data);
         if(d.kind==='in' && price) store.add('finance', {date:data.date, kind:'expense', category: FIN_CAT[cat], amount:price, note:`${it.name}, ${num(q)} ${it.unit}${data.note ? ' · ' + data.note : ''}`});
@@ -2723,36 +2740,42 @@ function moveForm(m){
     };
     const del = s.querySelector('#mvdel');
     if(del) del.onclick = () => askConfirm(s.querySelector('#mvdelc'), 'Удалить операцию? Запись в финансах, если была, удалите отдельно.',
-      () => { store.del('moves', m.id); toast('Удалено'); closeSheet(); });
+      () => { store.del('moves', m.id); if(m.auto) store.merge('feedauto', 'd-' + m.date, {date:m.date, locked:true}); toast('Удалено'); closeSheet(); });
   }, 'mvform');
 }
 function feedLogSheet(){
-  const days = S.feedauto.slice().sort((a,b) => b.date.localeCompare(a.date)).slice(0, 60);
-  const body = days.length ? `<p class="muted" style="margin:0">Каждый день корм списывается по рационам загонов и числу голов. Сегодняшняя запись пересчитывается, пока идёт день. Нажмите на день, чтобы исправить количество или отменить списание.</p>
-    <div class="list">${days.map(d => {
-      const parts = Object.entries(d.items||{}).map(([id,q]) => `${itemById(id)?.name||'удалён'} ${num(q)}`);
-      return `<button class="row" data-day="${d.id}" style="grid-template-columns:auto 1fr auto"><span class="pill ${d.skipped?'':'ok'}">${fmtShort(d.date)}</span>
-        <span class="main"><div class="name">${d.skipped ? 'Не списывалось' : parts.length + ' ' + plural(parts.length,'корм','корма','кормов')}</div><div class="sub">${esc(parts.join(' · '))}</div></span>
-        <span class="side">${d.locked?'<span class="pill warn">вручную</span>':''}</span></button>`;
-    }).join('')}</div>` : `<div class="empty"><p>Списаний ещё не было. Они появятся после назначения рационов загонам.</p></div>`;
-  openSheet('Журнал списаний кормов', body, s => s.querySelectorAll('[data-day]').forEach(b => b.onclick = () => feedDayForm(S.feedauto.find(d => d.id===b.dataset.day))), 'feedlog');
+  const by = {}; S.moves.filter(m => m.auto).forEach(m => (by[m.date] ||= []).push(m));
+  S.feedauto.filter(d => d.skipped).forEach(d => by[d.date] ||= []);
+  const days = Object.keys(by).sort().reverse().slice(0, 60), st = setting('feed') || {};
+  const body = `<p class="muted" style="margin:0">Каждый день корм списывается расходом склада по рационам загонов и числу голов${st.from ? ` (с ${fmtD(st.from)})` : ''}. Сегодняшнее списание пересчитывается, пока идёт день. Нажмите на день, чтобы поправить количество или отменить списание.</p>
+    ${days.length ? `<div class="list">${days.map(d => { const ms = by[d], sk = S.feedauto.find(x => x.id === 'd-' + d)?.skipped;
+      return `<button class="row" data-day="${d}" style="grid-template-columns:auto 1fr auto"><span class="pill ${sk ? '' : 'ok'}">${fmtShort(d)}</span>
+        <span class="main"><div class="name">${sk ? 'Не списывалось' : ms.length + ' ' + plural(ms.length, 'корм', 'корма', 'кормов')}</div><div class="sub">${esc(ms.map(m => `${itemById(m.item)?.name || 'удалён'} ${num(round(+m.qty, 2))}`).join(' · '))}</div></span>
+        <span class="side">${ms.some(m => m.manual) ? '<span class="pill warn">вручную</span>' : ''}</span></button>`; }).join('')}</div>` : `<div class="empty"><p>Списаний ещё не было. Они появятся после назначения рационов загонам.</p></div>`}`;
+  openSheet('Журнал списаний кормов', body, s => s.querySelectorAll('[data-day]').forEach(b => b.onclick = () => feedDayForm(b.dataset.day)), 'feedlog');
 }
-function feedDayForm(d){
-  if(!d) return;
-  const ids = [...new Set([...Object.keys(d.items||{})])];
+function feedDayForm(date){
+  const ms = S.moves.filter(m => m.auto && m.date === date), mk = S.feedauto.find(x => x.id === 'd-' + date), sk = mk?.skipped;
+  const ids = [...new Set([...ms.map(m => m.item), ...Object.keys(mk?.items || {})])];
   const body = `<form id="fdf" novalidate>
-    ${ids.map(id => { const it = itemById(id); return fld('fd-'+id, `${esc(it?.name||'удалён')}, ${esc(it?.unit||'')}`, `<input id="fd-${id}" name="${id}" inputmode="decimal" value="${esc(num(d.items[id],3).replace(/\s/g,''))}" autocomplete="off">`); }).join('')}
+    ${ids.map(id => { const it = itemById(id), m = ms.find(x => x.item === id); return fld('fd-' + id, `${esc(it?.name || 'удалён')}, ${esc(it?.unit || '')}`, `<input id="fd-${id}" name="${id}" inputmode="decimal" value="${esc(String(m ? round(+m.qty, 3) : '').replace('.', ','))}" autocomplete="off">`); }).join('')}
     <div class="actions"><button class="btn primary" type="submit">Сохранить</button></div>
-    <div class="actions"><button class="btn ${d.skipped?'':'danger'}" type="button" id="fdskip">${d.skipped ? 'Вернуть списание' : 'Не кормили — не списывать'}</button></div>
+    <div class="actions"><button class="btn ${sk ? '' : 'danger'}" type="button" id="fdskip">${sk ? 'Вернуть списание' : 'Не кормили — не списывать'}</button></div>
   </form>`;
-  openSheet(`Списание за ${fmtD(d.date)}`, body, s => {
+  openSheet(`Списание за ${fmtD(date)}`, body, s => {
     const f = s.querySelector('#fdf');
     f.onsubmit = ev => {
-      ev.preventDefault(); const items = {};
-      ids.forEach(id => { const q = dec(f.querySelector(`[name="${id}"]`).value); if(q > 0) items[id] = round(q,3); });
-      store.set('feedauto', d.id, {...strip(d), items, locked:true}); toast('Списание исправлено'); feedLogSheet();
+      ev.preventDefault();
+      ids.forEach(id => { const q = dec(f.querySelector(`[name="${id}"]`).value), mid = `ra-${date}-${id}`, m = ms.find(x => x.item === id);
+        if(q > 0){ if(!m || Math.abs(+m.qty - q) > 1e-9) store.set('moves', mid, {item:id, kind:'out', qty:round(q, 3), date, auto:true, manual:true, note:'Кормление по рационам'}); }
+        else if(m) store.del('moves', m.id); });
+      store.merge('feedauto', 'd-' + date, {date, locked:true}); toast('Списание исправлено'); feedLogSheet();
     };
-    s.querySelector('#fdskip').onclick = () => { store.set('feedauto', d.id, {...strip(d), skipped:!d.skipped, locked:true}); toast(d.skipped ? 'Списание возвращено' : 'Списание за день отменено'); feedLogSheet(); };
+    s.querySelector('#fdskip').onclick = () => {
+      if(sk){ store.merge('feedauto', 'd-' + date, {date, skipped:false, locked:false}); toast('Списание вернётся по рационам'); }
+      else { ms.forEach(m => store.del('moves', m.id)); store.merge('feedauto', 'd-' + date, {date, skipped:true, locked:true}); toast('Списание за день отменено'); }
+      feedLogSheet();
+    };
   }, 'fdform');
 }
 
