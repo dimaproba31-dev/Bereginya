@@ -27,10 +27,22 @@ const MILKNAME = {sheep:'Овечье', goat:'Козье'};
 const MALE = {sheep:'Баран', goat:'Козёл'};
 const YOUNG = {sheep:'ягнёнок', goat:'козлёнок'};
 const GESTATION = {sheep:147, goat:150};
+// Порода детёныша: как у родителей, а если разные — помесь «мать × отец»
+const kidBreed = (mom, dad) => { const a = (mom?.breed || '').trim(), b = (dad?.breed || '').trim(); return !b || norm(a) === norm(b) ? a : !a ? b : `${a} × ${b}`; };
+// «На осеменении»: последняя запись осеменения самки, после которой не было окота, новой записи или «сняли с осеменения»
+function insemOf(a){
+  if(!a || a.status !== 'active' || a.sex !== 'f') return null;
+  const e = S.events.filter(x => x.type === 'mating' && (x.animalIds || []).includes(a.id)).sort((x, y) => y.date.localeCompare(x.date))[0];
+  if(!e || (e.offIds || []).includes(a.id)) return null;
+  if(S.events.some(x => x.type === 'birth' && (x.animalIds || []).includes(a.id) && x.date >= e.date)) return null;
+  const due = addDays(e.date, GESTATION[a.species] || 147);
+  if(daysBetween(today(), due) < -45) return null;
+  return {e, sire:byId(e.sireId), due};
+}
 const STATUS = {active:'В стаде', sold:'Продан(а)', slaughter:'Забой', dead:'Пал(а)'};
 const ET = {
   ill:{t:'Лечение', vet:1}, vac:{t:'Вакцинация', vet:1}, treat:{t:'Дегельминтизация', vet:1}, vit:{t:'Витаминизация', vet:1}, birth:{t:'Окот'},
-  manip:{t:'Манипуляция'}, weight:{t:'Взвешивание'}, mating:{t:'Случка'}, shear:{t:'Стрижка', hide:1}, other:{t:'Другое'},
+  manip:{t:'Манипуляция'}, weight:{t:'Взвешивание'}, mating:{t:'Поставили на осеменение'}, shear:{t:'Стрижка', hide:1}, other:{t:'Другое'},
   dose:{t:'Процедура по схеме', hide:1}, result:{t:'Результат лечения', hide:1}, task:{t:'Дело по плану', hide:1}
 };
 const CAT = {
@@ -517,7 +529,7 @@ function planItems(){
 const urgency = date => { const d = daysBetween(today(), date); return d < 0 ? 'over' : d <= 7 ? 'soon' : 'later'; };
 
 /* ===== Отрисовка ===== */
-const NAV_OF = {yplan:'more', genetics:'more', daily:'home', events:'home', plan:'home', vet:'herd', people:'more', feedsheet:'more', feeding:'more', log:'more', home:'home', herd:'herd', pens:'herd', milk:'milk', stock:'stock', more:'more', money:'more', stats:'more'};
+const NAV_OF = {yplan:'more', genetics:'more', daily:'home', events:'home', plan:'home', vet:'herd', people:'more', feedsheet:'more', feeding:'more', manual:'more', log:'more', home:'home', herd:'herd', pens:'herd', milk:'milk', stock:'stock', more:'more', money:'more', stats:'more'};
 function updateClock(){ const c = $('#clock'); if(!c) return; const d = new Date(); c.innerHTML = `<b>${d.toLocaleDateString('ru-RU', {day:'numeric', month:'long', year:'numeric'}).replace(/\s*г\.?$/, '')}</b>${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 setInterval(updateClock, 30000);
 function render(){
@@ -538,7 +550,7 @@ function render(){
   $('#fab').hidden = !({herd:canCreate('herd') && S.herdMode!=='pens', milk:canCreate('milk'), stock: S.stockCat==='tech' ? canManage('fuel') : canCreate(catDomain(S.stockCat)), plan:canCreate('herd') || canCreate('vet'), money:canCreate('fin')})[S.tab];
   let html = '';
   if(S.demo) html += `<div class="banner">Демо-режим: всё хранится только в этом браузере.${S.animals.some(a => a.demo) ? ` Сейчас открыт пример хозяйства. <button class="link adm" data-act="clear-demo">Очистить пример</button>` : ''}</div>`;
-  html += ({yplan:yplanView, genetics:genView, daily:dailyView, log:logView, people:peopleView, feedsheet:feedSheetView, feeding:feedingView, vet:vetView, events:eventsView, home: role==='feeder' ? feederHome : role==='mechanic' ? mechHome : homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
+  html += ({yplan:yplanView, genetics:genView, daily:dailyView, log:logView, people:peopleView, feedsheet:feedSheetView, feeding:feedingView, manual:manualView, vet:vetView, events:eventsView, home: role==='feeder' ? feederHome : role==='mechanic' ? mechHome : homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
   const focus = document.activeElement?.id, pos = document.activeElement?.selectionStart;
   v.innerHTML = html;
   bindView();
@@ -844,6 +856,7 @@ const FILTERS = {
   goat:['Козы', a=>a.status==='active'&&a.species==='goat'],
   nogroup:['Без группы', a=>a.status==='active'&&!groupOf(a)],
   quarantine:['Карантин', a=>a.status==='active'&&!!PEN[a.pen]?.barn.quarantine],
+  insem:['На осеменении', a=>!!insemOf(a)],
   nopen:['Без загона', a=>a.status==='active'&&!PEN[a.pen]],
   gone:['Выбывшие', a=>a.status!=='active'],
 };
@@ -873,7 +886,7 @@ function herdView(){
       return n ? `<button class="gbtn" data-f="${f}"><span>${l}</span><b>${n}</b></button>` : ''; }).join('')}</div></div>`;
   const search = `<div class="search"><input id="q" type="search" placeholder="Найти по номеру бирки или кличке" value="${esc(S.q)}" autocomplete="off"></div>`;
   if(!listMode){
-    const extra = ['nogroup','nopen','gone'].map(k => { const n = all.filter(FILTERS[k][1]).length; return n ? `<button class="gbtn soft" data-f="${k}"><span>${FILTERS[k][0]}</span><b>${n}</b></button>` : ''; }).join('');
+    const extra = ['insem','nogroup','nopen','gone'].map(k => { const n = all.filter(FILTERS[k][1]).length; return n ? `<button class="gbtn soft" data-f="${k}"><span>${FILTERS[k][0]}</span><b>${n}</b></button>` : ''; }).join('');
     const vt = vetTasks().length, vc = activeCourses().length;
     return search + `${!canTab('vet') ? '' : `<button class="banner as-btn ${vt ? '' : 'soft'}" data-tab-go="vet">Ветеринария${vt ? `: сегодня ${vt} ${plural(vt, 'процедура', 'процедуры', 'процедур')}` : vc ? `: идёт курсов ${vc}` : ' — лечение, вакцинация, схемы'} ›</button>`}<div class="hero"><div><div class="hero-l">Всего поголовье</div><div class="bignum">${act.length}</div></div><div class="hero-r"><span><i style="background:var(--sheep)"></i>Овцы <b>${nSheep}</b></span><span><i style="background:var(--goat)"></i>Козы <b>${nGoat}</b></span></div></div>
       ${block('sheep')}${block('goat')}
@@ -881,7 +894,7 @@ function herdView(){
       <button class="gbtn wide" data-f="active"><span>Весь список животных</span><b>${act.length} ›</b></button>`;
   }
   let h = `<div class="listtop"><button class="back" data-f="">‹ Стадо</button>${search}
-    <div class="kv listhead"><h2>${esc(q && !S.filter ? 'Поиск' : filterName(S.filter))} · ${list.length}</h2>${S.filter!=='gone' && list.some(a => a.status==='active') ? `<button class="btn small adm" data-act="regroup">Перевести в группу</button>` : ''}</div></div>`;
+    <div class="kv listhead"><h2>${esc(q && !S.filter ? 'Поиск' : filterName(S.filter))} · ${list.length}</h2><span class="actions" style="margin:0">${S.filter!=='gone' && canCreate('birth') && list.some(a => a.status==='active' && a.sex==='f' && !insemOf(a)) ? `<button class="btn small" data-act="mate-list">Поставить на осеменение</button>` : ''}${S.filter!=='gone' && list.some(a => a.status==='active') ? `<button class="btn small adm" data-act="regroup">Перевести в группу</button>` : ''}</span></div></div>`;
   if(!list.length) return h + `<div class="empty"><p>${S.filter==='nogroup' ? 'Все животные распределены по группам.' : 'Под этот фильтр никто не подходит.'}</p></div>`;
   return h + `<div class="list">` + list.map(a => {
     const w = lastWeight(a.id), g = groupOf(a);
@@ -1025,7 +1038,7 @@ const ROLE_DEF = {
   pending: {l:'Нет доступа (заявка)', d:'Новая заявка или отключённый сотрудник — программа не открывается'}
 };
 const VET_TYPES = new Set(['ill', 'vac', 'treat', 'vit', 'dose', 'result']);
-const ALL_TABS = ['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'plan', 'money', 'stats', 'feedsheet', 'feeding', 'yplan', 'genetics', 'daily'];
+const ALL_TABS = ['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'plan', 'money', 'stats', 'feedsheet', 'feeding', 'manual', 'yplan', 'genetics', 'daily'];
 const ROLE = {
   admin:   {create:'*', edit:'*', manage:'*', tabs:[...ALL_TABS, 'log', 'people'], stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
   manager: {create:['herd', 'birth', 'manip', 'milk', 'feed', 'fuel', 'fin', 'plan'], edit:['herd', 'birth', 'manip', 'milk', 'feed', 'fuel', 'fin', 'plan'], manage:['herd', 'feed', 'fuel', 'plan'],
@@ -1033,7 +1046,7 @@ const ROLE = {
   foreman: {create:['herd', 'birth', 'vet', 'manip', 'milk', 'feed', 'fuel', 'fin', 'plan'], edit:[], manage:[], tabs:ALL_TABS, stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
   vet:     {create:['vet', 'birth', 'manip', 'milk', 'plan'], edit:['vet', 'manip', 'milk'], manage:['vet'], tabs:['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'daily', 'yplan', 'plan'], stock:['vet'],
             xl:['herd', 'births', 'events', 'milk', 'milkHeads', 'milkOut', 'vet']},
-  feeder:  {create:['feed', 'plan'], edit:['feed'], manage:['feed'], tabs:['home', 'herd', 'pens', 'stock', 'feedsheet', 'feeding', 'more'], stock:['feed'], xl:['feed', 'pens']},
+  feeder:  {create:['feed', 'plan'], edit:['feed'], manage:['feed'], tabs:['home', 'herd', 'pens', 'stock', 'feedsheet', 'feeding', 'manual', 'more'], stock:['feed'], xl:['feed', 'pens']},
   mechanic:{create:['fuel', 'plan'], edit:['fuel'], manage:['fuel'], tabs:['home', 'stock', 'more'], stock:['fuel', 'tech'], xl:['fuel', 'tech']},
   viewer:  {create:[], edit:[], manage:[], tabs:ALL_TABS, stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
   pending: {create:[], edit:[], manage:[], tabs:[], stock:[], xl:[]}
@@ -1049,7 +1062,7 @@ const has = (v, d) => v === '*' || (Array.isArray(v) && v.includes(d));
 const canCreate = d => has(R().create, d);
 const canEdit = d => has(R().edit, d);
 const canManage = d => has(R().manage, d);
-const canTab = t => t === 'home' || t === 'more' || has(R().tabs, t);
+const canTab = t => t === 'home' || t === 'more' || t === 'manual' || has(R().tabs, t);
 const canStock = c => R().stock.includes(c === 'vehicle' ? 'tech' : c);
 const canXl = k => has(R().xl, k);
 const seeWho = () => ['admin', 'manager'].includes(roleOf());
@@ -1224,6 +1237,7 @@ function moreView(){
   const row = (go, t, sub, attr) => `<button class="row" ${attr || `data-tab-go="${go}"`} style="grid-template-columns:1fr auto"><span class="main"><div class="name">${t}</div><div class="sub">${sub}</div></span><span class="side">›</span></button>`;
   const rows = [
     S.admin && row('people', 'Пользователи и роли', 'Имена, роли и права доступа'),
+    row('manual', 'Инструкция по программе', 'Как занести окот, лечение, надой, корма — всё по шагам'),
     canTab('daily') && row('daily', 'Отчёт за текущий день', 'Поголовье по группам, молоко и средний удой, остатки кормов'),
     canTab('events') && row('events', 'События', 'Что сделать сегодня и что впереди: уколы, ревакцинации, окоты'),
     canTab('vet') && row('vet', 'Ветеринария', 'Лечение по схемам, вакцинация, дегельминтизация'),
@@ -1352,6 +1366,7 @@ function bindView(){
   on('[data-fin]', b => financeForm(S.finance.find(r => r.id===b.dataset.fin)));
   on('[data-m]', b => { const [y,m] = S.month.split('-').map(Number); S.month = iso(new Date(y, m-1+(+b.dataset.m), 1)).slice(0,7); render(); });
   on('[data-tab-go]', b => go(b.dataset.tabGo));
+  const mq = document.querySelector('#man-q'); if(mq) mq.oninput = () => { S.manQ = mq.value; const tmp = document.createElement('div'); tmp.innerHTML = manualView(); document.querySelector('.manual').replaceWith(tmp.querySelector('.manual')); };
   document.querySelectorAll('[data-penration]').forEach(sel => sel.onchange = () => { const pid = sel.dataset.penration; store.merge('pens', pid, {ration: sel.value || '', rationNo:DEL}); toast(sel.value ? `${penLong(pid)}: ${rationById(sel.value)?.name}` : `${penLong(pid)}: без рациона`); });
   { const dr = document.querySelector('#demo-role'); if(dr) dr.onchange = () => { S.demoRole = dr.value; S.admin = dr.value === 'admin'; applyRole(); render(); toast('Вы смотрите как: ' + ROLE_DEF[dr.value].l); }; }
   on('[data-fmv]', b => moveForm({cat:'feed', kind:b.dataset.fmv}));
@@ -1386,7 +1401,7 @@ function bindView(){
   on('[data-act]', b => ({
     'add-animal':() => animalForm(), 'add-fin':() => financeForm(), 'add-ration':() => rationForm(),
     'add-item':() => itemForm({cat:S.stockCat}), 'add-routine':() => routineForm(null), 'seed-plan':seedPlan, 'plan-ics':planIcs, 'plan-xl':planXl, 'daily-xl':dailyXl, 'daily-share':dailyShare, 'add-scheme':() => schemeForm(null, S.vetKind), 'seed-scheme':seedScheme, 'veh-all-gsm':allToGsm, 'seed-items':seedItems, 'milkout':() => milkOutForm(),
-    'feed-log':feedLogSheet, 'feeding-xl':feedingXl, 'ration-clear-old':clearOldRationNos, akt:aktSheet, 'q-birth':() => eventForm({type:'birth'}), 'q-vet':() => eventForm({type:'vac'}), 'q-feed':() => moveForm({cat:'feed', kind:'in'}), 'q-fuel':() => moveForm({cat:'fuel', kind:'out'}), 'add-fuel':() => itemForm({cat:'fuel'}), 'add-vehicle':() => itemForm({cat:'vehicle'}), milkquick:() => milkQuickForm(S.milkDate||today(), defaultSession()), import:importSheet, regroup:() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); regroupSheet(ids, filterName(S.filter)); }, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
+    'mate-list':() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => a.status==='active' && a.sex==='f' && !insemOf(a)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); eventForm({type:'mating', animalIds:ids}); }, 'feed-log':feedLogSheet, 'feeding-xl':feedingXl, 'ration-clear-old':clearOldRationNos, akt:aktSheet, 'q-birth':() => eventForm({type:'birth'}), 'q-vet':() => eventForm({type:'vac'}), 'q-feed':() => moveForm({cat:'feed', kind:'in'}), 'q-fuel':() => moveForm({cat:'fuel', kind:'out'}), 'add-fuel':() => itemForm({cat:'fuel'}), 'add-vehicle':() => itemForm({cat:'vehicle'}), milkquick:() => milkQuickForm(S.milkDate||today(), defaultSession()), import:importSheet, regroup:() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); regroupSheet(ids, filterName(S.filter)); }, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
     logout:() => fb && fb.au.signOut(fb.auth)
   })[b.dataset.act]?.());
 }
@@ -2134,6 +2149,11 @@ function animalCard(id){
       ${a.sex==='f' ? `<div><dt>Надой, 7 дней</dt><dd>${mk ? `${num(mk.avg,2)} л/сут` : '—'}</dd></div>` : `<div><dt>Потомков</dt><dd>${kids.length}</dd></div>`}
     </dl>
     ${a.note?`<p class="muted" style="margin:0">${esc(a.note)}</p>`:''}
+    ${(() => { const ins = insemOf(a); return ins ? `<div class="panel" style="gap:6px"><div class="eyebrow">На осеменении</div>
+      <div class="kv"><span>Поставили</span><strong>${fmtD(ins.e.date)}</strong></div>
+      <div class="kv"><span>${a.species === 'goat' ? 'Козёл' : 'Баран'}</span><strong>${ins.sire ? link(ins.sire) : '— не указан —'}</strong></div>
+      <div class="kv"><span>Ожидаемый окот</span><strong>около ${fmtD(ins.due)}</strong></div>
+      ${canCreate('birth') ? `<div class="actions"><button class="btn small" id="insbirth">Записать окот</button><button class="btn small" id="insoff">Сняли с осеменения</button></div>` : ''}</div>` : ''; })()}
     ${a.sex==='f' && adult(a) ? `<div class="panel"><div class="kv"><span class="eyebrow">Последний окот</span>${lb?`<span class="muted">всего окотов: ${lb.total}</span>`:''}</div>
       ${lb ? `<div class="kv"><span>${fmtD(lb.ev.date)}</span><strong>${lb.ev.count||lb.kids.length} ${plural(+(lb.ev.count||lb.kids.length),'детёныш','детёныша','детёнышей')}</strong></div>
         ${lb.kids.length ? `<div class="kids">${lb.kids.map(k => `<button class="kid" data-go="${k.id}"><span class="tag">${esc(k.tag)}</span><span>${k.sex==='f' ? (k.species==='goat'?'♀ козочка':'♀ ярочка') : (k.species==='goat'?'♂ козлик':'♂ баранчик')}</span><span class="muted">${fmtShort(k.birth)}</span></button>`).join('')}</div>` : `<p class="muted" style="margin:0">Карточки детёнышей не заведены.</p>`}`
@@ -2148,6 +2168,8 @@ function animalCard(id){
     s.querySelectorAll('[data-ev]').forEach(b => b.onclick = () => { const e = S.events.find(x => x.id===b.dataset.ev); if(!e) return; if(e.course) courseSheet(e.course); else if(e.scheme) courseSheet(e.id); else eventForm(e); });
     s.querySelectorAll('[data-course]').forEach(b => b.onclick = () => courseSheet(b.dataset.course));
     const ea = s.querySelector('#evadd'); if(ea) ea.onclick = () => evPick(id);
+    const ib = s.querySelector('#insbirth'); if(ib) ib.onclick = () => eventForm({animalIds:[id], type:'birth', fixed:true});
+    const io = s.querySelector('#insoff'); if(io) io.onclick = () => { const ins = insemOf(byId(id)); if(!ins) return; store.merge('events', ins.e.id, {offIds:[...(ins.e.offIds || []), id]}); toast('Снята с осеменения'); setTimeout(() => animalCard(id), 150); };
     const ed = s.querySelector('#edit'); if(ed) ed.onclick = () => animalForm(a);
   }, 'card:'+id);
 }
@@ -2257,12 +2279,12 @@ function animalForm(a, pre){
 /* ----- Форма события (в т.ч. окот с ягнятами) ----- */
 // Выбор события для одного животного (из карточки)
 function evChoices(a){
-  const order = [['birth', 'Окот'], ['ill', 'Лечение'], ['vac', 'Вакцинация'], ['treat', 'Дегельминтизация'], ['vit', 'Витаминизация'], ['manip', 'Манипуляция'], ['weight', 'Взвешивание'], ['mating', 'Случка'], ['other', 'Другое']];
-  return order.filter(([k]) => canCreate(evDomain(k)) && !(k === 'birth' && a.sex !== 'f'));
+  const order = [['birth', 'Окот'], ['ill', 'Лечение'], ['vac', 'Вакцинация'], ['treat', 'Дегельминтизация'], ['vit', 'Витаминизация'], ['manip', 'Манипуляция'], ['weight', 'Взвешивание'], ['mating', 'Поставили на осеменение'], ['other', 'Другое']];
+  return order.filter(([k]) => canCreate(evDomain(k)) && !((k === 'birth' || k === 'mating') && a.sex !== 'f'));
 }
 function evPick(id){
   const a = byId(id); if(!a) return;
-  const sub = {birth:'Дата, приплод, карточки детёнышей', ill:'По схеме лечения или вручную', vac:'Схема, ревакцинация — тем же животным', treat:'Схема, повторная обработка', vit:'Схема или препарат вручную', manip:Object.values(MANIP).join(', '), weight:'Вес, кг', mating:'С каким производителем', other:'Любая заметка'};
+  const sub = {birth:'Дата, приплод, карточки детёнышей', ill:'По схеме лечения или вручную', vac:'Схема, ревакцинация — тем же животным', treat:'Схема, повторная обработка', vit:'Схема или препарат вручную', manip:Object.values(MANIP).join(', '), weight:'Вес, кг', mating:'С каким бараном (козлом) — дети получат номера матери и отца', other:'Любая заметка'};
   const body = `<div class="panel"><div class="name">№ ${esc(a.tag)} · ${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'}${a.pen ? ' · ' + esc(penShort(a.pen)) : ''}</div></div>
     <div class="list">${evChoices(a).map(([k, l]) => `<button class="row" data-pk="${k}" style="grid-template-columns:1fr auto"><span class="main"><div class="name">${l}</div><div class="sub">${esc(sub[k] || '')}</div></span><span class="side">›</span></button>`).join('')}</div>`;
   openSheet('Добавить событие', body, s => {
@@ -2297,7 +2319,7 @@ function eventForm(e){
     <div data-for="manip">${fld('e-manip','Что сделали',`<select id="e-manip" name="manip">${Object.entries(MANIP).map(([k,l]) => opt(k,l,v.manip||'dehorn')).join('')}</select>`)}
       <div id="e-surg"><div class="eyebrow" style="margin-top:6px">Препараты</div><div id="e-drugs"></div><button type="button" class="link" id="e-dadd" style="align-self:flex-start">+ Добавить препарат</button></div></div>
     <div data-for="weight">${fld('e-w','Вес, кг',`<input id="e-w" name="weight" inputmode="decimal" value="${esc(v.weight)}" autocomplete="off">`)}</div>
-    <div data-for="mating">${fld('e-sire','Производитель',`<select id="e-sire" name="sireId">${opt('','— не указан —',v.sireId||'')}${males.map(m => opt(m.id, animalLabel(m), v.sireId)).join('')}</select>`)}<p class="muted" style="margin:4px 0 0">Дата окота появится в «Плане».</p></div>
+    <div data-for="mating">${fld('e-sire','Какого барана (козла) поставили *',`<select id="e-sire" name="sireId">${opt('','— выберите —',v.sireId||'')}${['sheep', 'goat'].map(sp => { const ms = males.filter(m => m.species === sp).sort((x, y) => (['ram', 'buck'].includes(groupOf(y)) - ['ram', 'buck'].includes(groupOf(x))) || tagSort(x, y)); return ms.length ? `<optgroup label="${sp === 'goat' ? 'Козлы' : 'Бараны'}">${ms.map(m => opt(m.id, animalLabel(m) + (['ram', 'buck'].includes(groupOf(m)) ? ' · производитель' : ''), v.sireId)).join('')}</optgroup>` : ''; }).join('')}</select>`)}<p class="muted" style="margin:4px 0 0">Самка получит статус «На осеменении», ожидаемый окот появится в «Событиях». При окоте отец подставится сам, и детёныши получат номера матери и отца.</p></div>
     <div data-for="birth" class="birth">
       <div class="two">${fld('e-count','Родилось живыми',`<input id="e-count" name="count" type="number" min="0" max="8" step="1" inputmode="numeric" value="${esc(v.count ?? (isEdit?'':1))}">`)}
         ${fld('e-ksire','Отец',`<select id="e-ksire" name="kidSire">${opt('','— не указан —','')}${males.map(m => opt(m.id, animalLabel(m), v.sireId)).join('')}</select>`)}</div>
@@ -2345,7 +2367,7 @@ function eventForm(e){
       findIn.onkeydown = ev2 => { if(ev2.key !== 'Enter') return; ev2.preventDefault(); const q = norm(findIn.value); if(!q) return;
         const rows = [...s.querySelectorAll('#e-alist .pickrow')].filter(r => !r.hidden), exact = rows.filter(r => r.dataset.t === q), pick = exact.length === 1 ? exact[0] : rows.length === 1 ? rows[0] : null;
         if(pick){ pick.querySelector('input').checked = true; findIn.value = ''; applyFind(); count(); updateKids(); toast('Отмечено: № ' + pick.querySelector('.tag').textContent); } }; }
-    const lastSire = (momId, date) => S.events.filter(x => x.type==='mating' && (x.animalIds||[]).includes(momId) && x.date <= date && x.sireId).sort((a,b) => b.date.localeCompare(a.date))[0]?.sireId || '';
+    const lastSire = (momId, date) => S.events.filter(x => x.type==='mating' && (x.animalIds||[]).includes(momId) && x.date <= date && daysBetween(x.date, date) <= 220 && x.sireId).sort((a,b) => b.date.localeCompare(a.date))[0]?.sireId || '';
     function updateKids(){
       if(t.value!=='birth' || isEdit){ kidsBox.innerHTML = ''; return; }
       const ids = checked();
@@ -2355,17 +2377,19 @@ function eventForm(e){
       const prev = [...kidsBox.querySelectorAll('.kidrow')].map(r => ({tag:r.querySelector('[data-k=tag]').value, sex:r.querySelector('input[type=radio]:checked')?.value, w:r.querySelector('[data-k=w]').value, br:r.querySelector('[data-k=br]').value}));
       kidsBox.innerHTML = n ? `<div class="eyebrow">${mom.species==='goat'?'Козлята':'Ягнята'} · мать ${esc(animalLabel(mom))}, ${esc(penShort(mom.pen)||'без загона')}</div>` + Array.from({length:n}, (_,i) => {
         const p = prev[i] || {}; const sx = p.sex || 'f';
-        return `<div class="kidrow"><span class="kn">${i+1}</span>
-          <input data-k="tag" aria-label="Номер бирки детёныша ${i+1}" placeholder="${esc(mom.tag)}-${i+1}" value="${esc(p.tag||'')}" autocomplete="off">
-          <div class="seg"><label><input type="radio" name="ks-${i}" value="f" ${sx==='f'?'checked':''}>♀</label><label><input type="radio" name="ks-${i}" value="m" ${sx==='m'?'checked':''}>♂</label></div>
-          <input data-k="w" aria-label="Вес при рождении, кг" placeholder="вес, кг" inputmode="decimal" value="${esc(p.w||'')}" autocomplete="off">
-          <input data-k="br" class="kbr" aria-label="Порода" placeholder="порода" list="breeds" value="${esc(p.br ?? mom.breed ?? '')}" autocomplete="off"></div>`;
+        return `<div class="kidrow panel" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px">
+          <div class="eyebrow" style="grid-column:1/-1">${mom.species==='goat'?'Козлёнок':'Ягнёнок'} ${i+1}</div>
+          ${fld('', 'Номер бирки', `<input data-k="tag" placeholder="${esc(mom.tag)}-${i+1}" value="${esc(p.tag||'')}" autocomplete="off">`)}
+          <div class="field"><label>Пол</label><div class="seg"><label><input type="radio" name="ks-${i}" value="f" ${sx==='f'?'checked':''}>♀ ${mom.species==='goat'?'козочка':'ярочка'}</label><label><input type="radio" name="ks-${i}" value="m" ${sx==='m'?'checked':''}>♂ ${mom.species==='goat'?'козлик':'баранчик'}</label></div></div>
+          ${fld('', 'Вес, кг', `<input data-k="w" placeholder="напр. 3,5" inputmode="decimal" value="${esc(p.w||'')}" autocomplete="off">`)}
+          ${fld('', 'Порода', `<input data-k="br" list="breeds" placeholder="порода" value="${esc(p.br ?? kidBreed(mom, byId(f.querySelector('#e-ksire').value)))}" autocomplete="off">`)}</div>`;
       }).join('') + `<datalist id="breeds">${[...new Set(S.animals.map(x => x.breed).filter(Boolean))].map(b => `<option value="${esc(b)}">`).join('')}</datalist><p class="muted" style="margin:0">Для каждого: бирка, пол, вес при рождении, порода. Мать — отмеченная, отец — выше. Бирку можно оставить пустой — номер будет как в подсказке.</p>` : '';
     }
     t.onchange = () => { showFor(); updateKids(); }; showFor(); count(); updateKids();
     f.querySelector('#e-count').oninput = updateKids;
     f.querySelector('#e-date').onchange = updateKids;
-    f.querySelector('#e-ksire').onchange = e2 => e2.target.dataset.touched = '1';
+    f.querySelector('#e-ksire').onchange = e2 => { e2.target.dataset.touched = '1'; const mom = byId(checked()[0]); if(mom) kidsBox.querySelectorAll('[data-k=br]').forEach(x => { if(!x.dataset.touched) x.value = kidBreed(mom, byId(e2.target.value)); }); };
+    kidsBox.addEventListener('input', ev2 => { if(ev2.target.dataset.k === 'br') ev2.target.dataset.touched = '1'; });
     boxes().forEach(c => c.onchange = () => { count(); updateKids(); });
     s.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => {
       const p = b.dataset.pick;
@@ -2389,10 +2413,12 @@ function eventForm(e){
       else if(isEdit && e.scheme){ data.scheme = e.scheme; data.drug = e.drug || e.scheme.name; if(e.nextDate) data.nextDate = e.nextDate; if(e.prevCourse) data.prevCourse = e.prevCourse; }
       else if(ET[type].vet){ data.drug = fd.get('drug')||''; data.dose = fd.get('dose')||''; if(fd.get('nextDate')) data.nextDate = fd.get('nextDate'); }
       if(type==='weight'){ const w = dec(fd.get('weight')); if(!(w > 0)){ err.hidden = false; err.textContent = 'Укажите вес.'; return; } data.weight = round(w,1); }
-      if(type==='mating' && fd.get('sireId')) data.sireId = fd.get('sireId');
+      if(type==='mating'){ if(!fd.get('sireId')){ err.hidden = false; err.textContent = 'Выберите барана (козла), с которым поставили.'; return; } data.sireId = fd.get('sireId');
+        const males2 = all.filter(id => byId(id)?.sex === 'm'); if(males2.length){ err.hidden = false; err.textContent = 'На осеменение ставят самок — уберите самцов из списка.'; return; } }
       if(type==='manip'){ data.manip = fd.get('manip') || 'dehorn'; if(data.manip==='surgery'){ data.drugs = readDrugs(); if(!data.drugs.length && !data.note){ err.hidden = false; err.textContent = 'Для операции укажите препараты или опишите в комментарии, что делали.'; return; } } }
       if(type==='birth'){ data.count = parseInt(fd.get('count')) || 0; if(fd.get('kidSire')) data.sireId = fd.get('kidSire'); }
       if(isEdit && e.doneNext && data.nextDate===e.nextDate) data.doneNext = true;
+      if(isEdit && e.offIds) data.offIds = e.offIds;
       if(isEdit){ data.by = e.by||null; data.byEmail = e.byEmail||null; data.created = e.created||null; store.set('events', e.id, data); }
       else { const nid = store.add('events', data);
         if(v.fromRepeat && S.events.some(x => x.id===v.fromRepeat)) store.merge('events', v.fromRepeat, {doneNext:true});
@@ -2463,7 +2489,133 @@ function penSheet(pid){
 }
 
 
-/* ===== Кормление: рационы и назначение по загонам (без автосписания) ===== */
+
+/* ===== Инструкция по программе (Ещё → Инструкция) ===== */
+const MANUAL = [
+ ['start', 'Начало работы: вход, установка, без интернета', `
+  <p><b>Вход.</b> Откройте программу по ссылке <b>dimaproba31-dev.github.io/Bereginya</b>, введите почту и пароль, нажмите «Войти». Первый вход — обязательно с интернетом.</p>
+  <p><b>Нет учётной записи?</b> На экране входа нажмите «Нет учётной записи? Подать заявку»: фамилия и имя, кем работаете, почта, пароль два раза → «Отправить заявку». Программа откроется сама, когда администратор назначит вам роль.</p>
+  <p><b>Установка значка.</b></p>
+  <ul><li><b>Android:</b> откройте ссылку в Google Chrome → меню ⋮ → «Установить приложение» (или «Добавить на главный экран»).</li>
+  <li><b>iPhone / iPad:</b> откройте ссылку в Safari → «Поделиться» (квадрат со стрелкой) → «На экран «Домой»» → «Добавить». Откройте программу с нового значка и войдите ещё раз.</li>
+  <li><b>Компьютер:</b> Chrome — значок «Установить» в адресной строке; Edge — меню … → «Приложения» → «Установить этот сайт как приложение».</li></ul>
+  <p><b>Без интернета.</b> Ничего включать не нужно: после первого входа программа и данные хранятся на устройстве. Всё, что внесли без связи, отправится само, когда появится интернет. Вверху видно состояние: <b>«синхронизировано»</b> — всё отправлено; <b>«офлайн · ждёт отправки»</b> — есть неотправленные записи.</p>
+  <p><b>Важно:</b> не выходите из учётной записи без интернета и не очищайте данные браузера, пока вверху «ждёт отправки». Хотя бы раз в день открывайте программу со связью.</p>
+  <p><b>Обновления</b> приходят сами. Если изменений не видно — закройте программу полностью и откройте снова (на компьютере в окне программы можно нажать Ctrl+Shift+R).</p>`],
+ ['roles', 'Роли: кто что видит', `
+  <p>Набор разделов и кнопок зависит от роли — её назначает администратор.</p>
+  <ul><li><b>Администратор</b> — всё, журнал изменений, пользователи и роли, загрузка из Excel.</li>
+  <li><b>Управляющий по эксплуатации</b> — всё, кроме ветеринарии; видит, кто что внёс; может исправлять.</li>
+  <li><b>Бригадир</b> — вносит все записи, но не исправляет и не удаляет их.</li>
+  <li><b>Ветеринарный врач</b> — аптека, лечение, вакцинация, обработки, схемы, манипуляции, окоты, осеменение, молоко.</li>
+  <li><b>Кормач</b> — склад кормов, рационы и кормление, табель кормления; стадо — просмотр.</li>
+  <li><b>Механизатор</b> — техника и ГСМ.</li>
+  <li><b>Пользователь</b> — только просмотр и выгрузка в Excel (например, бухгалтер).</li></ul>
+  <p>Если при исправлении записи появляется «Только просмотр» — вашей роли это не разрешено, обратитесь к администратору или управляющему.</p>`],
+ ['home', 'Главная', `
+  <p>На главной: поголовье (овцы, козы, молодняк, всего), календарь событий, ближайшие дела, быстрые действия и последние записи.</p>
+  <ul><li><b>Быстрые действия</b> — окот, надой, приход корма, заправка, лечение, вакцинация, витаминизация, дегельминтизация, манипуляция.</li>
+  <li><b>«События сегодня»</b> — что нужно сделать сегодня: уколы по курсам, ревакцинации, оценка результата лечения, ожидаемые окоты, дела годового плана.</li>
+  <li><b>«Отчёт за текущий день»</b> — сводка дня (см. раздел «Отчёты»).</li></ul>`],
+ ['herd', 'Стадо: группы, загоны, поиск, карточка', `
+  <p>Вкладка <b>«Стадо»</b> показывает поголовье двумя способами: <b>«По группам»</b> (дойные, стельные, ремонтный молодняк, производители, на мясо, молодняк до 4 мес, карантин…) и <b>«По загонам»</b> (Овчарня 1, Овчарня 2, Козлятник, Карантин, Проход).</p>
+  <ul><li><b>Поиск</b> — строка вверху: по номеру бирки, кличке, породе, загону.</li>
+  <li><b>Списки</b> «На осеменении», «Без группы», «Без загона», «Выбывшие» — кнопки под группами.</li>
+  <li><b>Карточка животного</b> — нажмите на животное: загон, группа, вид и порода, дата рождения и возраст, мать и отец (нажимаются), вес, надой, последний окот, история событий.</li>
+  <li>Группа определяется сама по категории и возрасту: молодняк старше 4 месяцев переходит в ремонтный молодняк (самки) или на мясо (самцы); животные в Карантине — в группе «Карантин».</li></ul>`],
+ ['animal', 'Добавить, изменить, перевести, выбытие', `
+  <p><b>Новое животное:</b> «Стадо» → кнопка «+» (или «Добавить животное») → номер бирки, вид, пол, загон, дата рождения, порода; мать, отец, кличка — по желанию → «Сохранить».</p>
+  <p><b>Изменить данные:</b> карточка → «Изменить».</p>
+  <p><b>Перевести в другой загон:</b> «Стадо» → «По загонам» → нажмите загон → отметьте животных (или «Отметить всех») → внизу «Переместить отмеченных в» → выберите загон → «Переместить».</p>
+  <p><b>Перевести в другую группу:</b> откройте нужный список (группу, загон или поиск) → «Перевести в группу» → выберите группу.</p>
+  <p><b>Назначение загона</b> (например «Дойные 2-разовые»): нажмите загон → поле «Назначение загона».</p>
+  <p><b>Выбытие</b> (продажа, забой, падёж): карточка → «Изменить» → «Статус» и «Дата выбытия». Для забоя и падежа там же можно указать упитанность, живую массу и диагноз — они попадут в акт выбытия.</p>`],
+ ['events', 'События по животному: «+ Добавить событие»', `
+  <p>Карточка животного → <b>«+ Добавить событие»</b> → выберите, что было. Форма откроется сразу с этим животным — выбирать его заново не нужно.</p>
+  <ul><li><b>Окот</b> — см. «Осеменение и окот».</li>
+  <li><b>Лечение, Вакцинация, Дегельминтизация, Витаминизация</b> — по схеме или вручную (препарат и доза), см. «Ветеринария».</li>
+  <li><b>Манипуляция</b> — обезроживание, кастрация, купирование хвоста, обрезка копыт, стрижка, операция. Для операции укажите препараты (название, доза, как вводили) и комментарий, что делали.</li>
+  <li><b>Взвешивание</b> — вес, кг.</li>
+  <li><b>Поставили на осеменение</b> — с каким бараном (козлом).</li>
+  <li><b>Другое</b> — любая заметка.</li></ul>
+  <p><b>Событие сразу нескольким животным</b> (например, вакцинация загона): быстрые кнопки на главной или «Ветеринария» → отметьте животных в списке. Есть поиск: впишите номер и нажмите Enter — животное отметится.</p>`],
+ ['breed', 'Осеменение и окот', `
+  <p><b>Поставить на осеменение одну самку:</b> карточка → «+ Добавить событие» → «Поставили на осеменение» → выберите барана (козла) → «Записать». Самка получит статус <b>«На осеменении»</b>, в её карточке — дата, баран и ожидаемый окот (овцы +147 дней, козы +150).</p>
+  <p><b>Сразу несколько:</b> «Стадо» → откройте группу или загон → «Поставить на осеменение» → отметятся все самки списка (лишних снимите) → выберите барана.</p>
+  <p><b>Не покрылась:</b> в карточке самки «Сняли с осеменения».</p>
+  <p><b>Окот:</b> в карточке самки «Записать окот» (или «+ Добавить событие» → «Окот») → дата, «Родилось живыми» → для каждого детёныша: номер бирки, пол, вес, порода. <b>Отец подставится сам</b> из осеменения, порода — по родителям (разные — помесь «мать × отец»). Бирку можно не вписывать — будет «номер матери-1», «-2».</p>
+  <p>После сохранения у каждого малыша своя карточка с матерью и отцом, датой рождения, загоном матери и весом при рождении.</p>
+  <p><b>Подбор барана</b> без близкого родства — «Ещё → Генетика».</p>`],
+ ['vet', 'Ветеринария: схемы, курсы, ревакцинация', `
+  <p>Раздел <b>«Ветеринария»</b> (меню слева или «Стадо» → баннер «Ветеринария»). Три вкладки: <b>Сегодня</b> — какие уколы делать сегодня; <b>Курсы</b> — идущие курсы; <b>Схемы</b> — ваши схемы.</p>
+  <p><b>Создать схему:</b> «Схемы» → «+ Новая схема» → тип (лечение, вакцинация, дегельминтизация, витаминизация), название (например «1 Понос молодняк») → препараты: из аптеки, доза, как вводить (в/м, п/к…), с какого дня и сколько дней → для лечения — на какой день оценить результат → «Сохранить».</p>
+  <p><b>Ревакцинация / повторная обработка:</b> в схеме вакцинации поставьте галочку «Нужна ревакцинация», укажите «Через сколько дней» (например 21) и «Сколько раз». Тем же животным в нужный день сама придёт «Ревакцинация» в «События» и на главную — нажмите «Сделать», откроется запись уже с этими животными. Для дегельминтизации и витаминизации — так же.</p>
+  <p><b>Назначить курс:</b> кнопка «Лечение» (или «Вакцинация»…) → выберите схему → отметьте животных → «Записать». Каждый день во вкладке «Сегодня» будет список процедур — нажмите «Сделано». В день оценки отметьте результат по каждому: здорово / повторить / другая схема / пало.</p>
+  <p><b>Аптека</b> (препараты, серии, сроки годности) — «Склад → Аптека».</p>`],
+ ['agenda', 'События, календарь, годовой план', `
+  <p><b>«События»</b> — всё, что нужно сделать: сегодня, неделя, месяц. Фильтры: ветеринария, окоты, склад, план. Просроченное — сверху. Ожидаемые окоты, ревакцинации, процедуры курсов, заканчивающиеся корма и препараты появляются сами.</p>
+  <p><b>Годовой план и напоминания</b> («Ещё»): регулярные дела — пробы молока в лабораторию, контрольная дойка, обрезка копыт, обработки, стрижка, подготовка к случке и т. д. «Загрузить базовый план» — типовой список; «+ Добавить дело» — своё: что, когда (раз в год / месяц / неделю), за сколько дней напомнить. Отметка «Сделано» — в «Событиях». «В календарь телефона» — напоминания в календарь телефона.</p>`],
+ ['milk', 'Молоко', `
+  <p>Вкладка <b>«Молоко»</b>: таблица за день — утро, вечер, козы, овцы, всего; молоко в наличии (остаток в танке).</p>
+  <ul><li><b>Надой общими литрами:</b> «Добавить надой» → день, утро/вечер, литры коз и овец.</li>
+  <li><b>Надой по каждой голове:</b> нажмите на ячейку таблицы (или «Записать по каждой голове» в форме надоя) → литры у каждой.</li>
+  <li><b>Отгрузка:</b> «Отгрузка на сыроварню» → вид молока, литры, куда: на сыроварню, продажа, выпойка молодняку, брак. Литры вычитаются из остатка.</li>
+  <li>Средний удой на голову — в «Отчёте за текущий день».</li></ul>`],
+ ['stock', 'Склад: корма, ГСМ, аптека, техника', `
+  <p>Вкладка <b>«Склад»</b>, четыре раздела: <b>Корма, ГСМ, Аптека, Техника</b>. В кормах, ГСМ и аптеке переключатель <b>Остаток | Приход | Расход</b>.</p>
+  <ul><li><b>Новая позиция:</b> «+ Корм» / «+ Топливо» / «+ Препарат» → название, единица (кг, л, шт), минимальный остаток; можно сразу указать начальное количество. У препаратов — серия, номер, срок годности, дозировка, способ введения.</li>
+  <li><b>Приход:</b> кнопка «+» на складе (или «Приход корма» на главной) → позиция, количество, дата, сумма (по желанию — попадёт в финансы).</li>
+  <li><b>Расход:</b> так же, тип «Расход».</li>
+  <li><b>Заправка техники:</b> ГСМ → «Заправить» (или «Заправка» на главной) → топливо, литры, техника, кто заправлял.</li>
+  <li><b>Техника:</b> «+ Добавить технику» → название, тип, госномер, прицеп. Галочка «В ГСМ» — показывать её при заправке.</li>
+  <li><b>Исправить или удалить операцию:</b> нажмите на неё в списке «Приход»/«Расход».</li></ul>
+  <p>Корм по рационам списывается сам — см. «Кормление».</p>`],
+ ['feeding', 'Кормление: рационы и автосписание', `
+  <p><b>«Ещё → Кормление».</b></p>
+  <p><b>Новый рацион:</b> «+ Новый рацион» → название с номером (например «Рацион №1 — дойные») → «Всего на голову в сутки, г» → для каждого корма: корм со склада и <b>%</b> (граммы посчитаются сами) или <b>граммы</b> (проценты посчитаются сами) → отметьте загоны → «Сохранить».</p>
+  <p><b>Назначить рацион загону:</b> в «Рационы по загонам» выберите рацион из списка у загона (или в карточке загона — «Рацион загона»). Рядом видно, сколько корма уходит на загон в сутки.</p>
+  <p><b>Автосписание:</b> каждый день программа сама записывает в склад расход по каждому корму: рацион × число голов в загоне («Кормление по рационам»). Сегодняшнее списание пересчитывается, если поменяли рацион или перевели животных. Пропущенные дни программа догонит при следующем открытии.</p>
+  <ul><li><b>«Журнал списаний»</b> — все дни; нажмите на день, чтобы поправить количество или «Не кормили — не списывать».</li>
+  <li><b>«Поставить на паузу»</b> — временно не списывать.</li>
+  <li>Внизу — «Нужно корма в сутки» по всем загонам, остаток и на сколько дней хватит.</li>
+  <li><b>«Скачать план кормления»</b> — Excel: загоны с расходом кормов и состав рационов.</li></ul>
+  <p><b>Табель кормления</b> («Ещё») — печатный бланк по загонам в Excel.</p>`],
+ ['reports', 'Отчёты, Excel, акт выбытия', `
+  <ul><li><b>Отчёт за текущий день</b> (главная или «Ещё»): поголовье по группам, окоты и выбытие за день, молоко утро/вечер и средний удой, отгрузки, остатки кормов и ГСМ, здоровье. Кнопки «Скачать в Excel» и «Отправить текстом» (в мессенджер). Стрелки ‹ › — другой день.</li>
+  <li><b>Выгрузка в Excel</b> («Ещё»): выберите период и листы → «Скачать Excel». Каждому доступны листы по своим разделам.</li>
+  <li><b>Акт выбытия из стада</b> (форма СП-54, «Ещё»): период (например 01.10–31.10), номер акта, дата, ФИО ответственного → программа соберёт всех со статусом «Забой» и «Пал(а)» за период; упитанность, массу и диагноз можно поправить прямо там → «Скачать акт в Excel».</li>
+  <li><b>Сводка</b> — поголовье, приплод, молоко, деньги за год. <b>Финансы</b> — доходы и расходы по месяцам («Добавить запись»).</li></ul>
+  <p>Файлы сохраняются в «Загрузки» телефона или компьютера.</p>`],
+ ['genetics', 'Генетика: подбор баранов', `
+  <p><b>«Ещё → Генетика»:</b> выберите вид и каких маток подбирать (все взрослые, группа или загон). Программа считает родство по записанным матерям и отцам до 5 поколений и показывает рейтинг производителей, кого к какому барану ставить без близкого родства и список запрещённых пар. «Записать случку с ним» — сразу ставит выбранных маток на осеменение.</p>
+  <p>Чтобы подбор работал, при окотах указывайте отца, а в карточках — мать и отца.</p>`],
+ ['admin', 'Для администратора: пользователи, журнал, загрузка из Excel', `
+  <p><b>Пользователи и роли</b> («Ещё», первым пунктом): вверху <b>«Новые заявки»</b> — выберите роль и нажмите «Одобрить» (или «Отклонить»). Ниже — все сотрудники: имя и роль. Роль «Нет доступа» закрывает программу уволенному сотруднику. Новая заявка также видна на главной.</p>
+  <p><b>Журнал изменений</b> — кто, когда и что внёс или изменил (видят администратор и управляющий).</p>
+  <p><b>Загрузка из Excel</b>: выберите файл — программа сама поймёт, что в нём:</p>
+  <ul><li><b>Стадо по загонам</b> (листы «Овчарня 1», «Овчарня 2», «Козлятник»): покажет, куда попадут животные, повторы бирок и ошибки. Галочка <b>«Заменить всё стадо данными файла»</b> — удалит животных, которых нет в файле, и всю историю, кроме лечения.</li>
+  <li><b>Журнал молока</b>: галочка «Заменить всё молоко в программе данными файла».</li>
+  <li><b>Склад кормов</b> и <b>учёт препаратов</b> — справочник, приход, расход.</li></ul>
+  <p><b>Резервная копия</b> («Ещё → Сохранить копию») — файл со всеми записями, сохраняйте раз в месяц.</p>`],
+ ['faq', 'Если что-то не так', `
+  <ul><li><b>«Неверная почта или пароль»</b> — проверьте раскладку и пробелы; забыли пароль — к администратору.</li>
+  <li><b>Нет раздела или кнопки</b> — их нет в вашей роли.</li>
+  <li><b>Долго «ждёт отправки»</b> — проверьте интернет и откройте программу заново.</li>
+  <li><b>Старая версия / не видно изменений</b> — закройте программу полностью и откройте снова со связью.</li>
+  <li><b>Чёрный экран на компьютере</b> — Ctrl+Shift+R в окне программы.</li>
+  <li><b>Животное не там</b> — проверьте списки «Без загона» и «Без группы» в «Стадо».</li></ul>`]
+];
+function manualView(){
+  const q = norm(S.manQ || '');
+  const hit = ([, t, b]) => !q || norm(t + ' ' + b.replace(/<[^>]+>/g, ' ')).includes(q);
+  const list = MANUAL.filter(hit);
+  return `<style>.mantext p,.mantext ul{margin:0}.mantext ul{padding-left:20px;display:grid;gap:6px}.manual summary{list-style-position:inside}</style><button class="back" data-tab-go="more">‹ Ещё</button><h2 class="page">Инструкция по программе</h2>
+    <div class="field"><label for="man-q">Поиск по инструкции</label><input id="man-q" type="search" value="${esc(S.manQ || '')}" placeholder="например: окот, рацион, ревакцинация" autocomplete="off"></div>
+    <div class="manual" style="display:grid;gap:10px">${list.length ? list.map(([k, t, b]) => `<details class="panel" ${q || S.manOpen === k ? 'open' : ''} data-man="${k}"><summary class="name" style="cursor:pointer;font-size:17px">${t}</summary><div class="mantext" style="display:grid;gap:10px;line-height:1.55;margin-top:8px">${b}</div></details>`).join('')
+      : `<div class="empty"><p>Ничего не найдено. Попробуйте другое слово.</p></div>`}</div>`;
+}
+
+/* ===== Кормление: рационы и назначение по загонам ===== */
 function feedingView(){
   let h = `<button class="back" data-tab-go="more">‹ Ещё</button><h2 class="page">Кормление</h2>`;
   if(loading('pens', 'rations', 'items', 'animals')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
