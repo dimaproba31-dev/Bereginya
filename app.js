@@ -2459,6 +2459,7 @@ function penSheet(pid){
     ${list.length && canCreate('herd') ? `<div class="list scroll">${list.map(a => `<label class="row pickrow"><input type="checkbox" name="pm" value="${a.id}"><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'} · ${esc(age(a.birth)||SPECIES[a.species])}</span></label>`).join('')}</div>
       <div class="movebar">${fld('p-to','Переместить отмеченных в',`<select id="p-to">${penOptions('', '— выберите загон —')}</select>`)}<button class="btn primary" id="pmove" disabled>Переместить</button></div>`
       : list.length ? '' : `<div class="empty"><p>${isPen ? 'В загоне никого нет.' : 'Все животные распределены по загонам.'}</p></div>`}
+    ${canCreate('birth') && list.some(a => a.sex === 'f' && !insemOf(a)) ? `<div class="actions"><button class="btn" id="pmate">Поставить на осеменение${canCreate('herd') ? ' (отмеченных самок)' : ''}</button></div>` : ''}
     ${isPen && canCreate('herd') ? `<div class="actions"><button class="btn" id="padd">Добавить животное в этот загон</button></div>` : ''}`;
   openSheet(isPen ? penLong(pid) : 'Без загона', body, s => {
     const rs = s.querySelector('#p-ration');
@@ -2471,10 +2472,14 @@ function penSheet(pid){
     if(pl) pl.onchange = () => { const v = pl.value.trim(); if(v !== penLabel(pid)){ store.merge('pens', pid, {label:v}); toast('Назначение загона сохранено'); } };
     const pm = () => [...s.querySelectorAll('input[name=pm]:checked')].map(c => c.value);
     const to = s.querySelector('#p-to'), mv = s.querySelector('#pmove');
-    const upd = () => { if(mv){ const n = pm().length; mv.disabled = !n || !to.value; mv.textContent = n ? `Переместить (${n})` : 'Переместить'; } };
+    const mt = s.querySelector('#pmate'), fem = ids => ids.map(byId).filter(a => a && a.sex === 'f' && !insemOf(a)).map(a => a.id);
+    const upd = () => { if(mv){ const n = pm().length; mv.disabled = !n || !to.value; mv.textContent = n ? `Переместить (${n})` : 'Переместить'; }
+      if(mt){ const n = fem(pm()).length; mt.textContent = n ? `Поставить на осеменение (${n})` : 'Поставить на осеменение — всех самок загона'; } };
+    if(mt) mt.onclick = () => { const sel = fem(pm()); eventForm({type:'mating', animalIds: sel.length ? sel : fem(list.map(a => a.id))}); };
     s.querySelectorAll('input[name=pm]').forEach(c => c.onchange = upd);
     if(to) to.onchange = upd;
     const pall = s.querySelector('#pall'); if(pall) pall.onclick = () => { const bs = [...s.querySelectorAll('input[name=pm]')]; const all = bs.every(c => c.checked); bs.forEach(c => c.checked = !all); upd(); };
+    upd();
     if(mv) mv.onclick = () => {
       const ids = pm(); if(!ids.length || !to.value) return;
       const tags = ids.map(id => byId(id)?.tag).filter(Boolean);
@@ -2541,7 +2546,8 @@ const MANUAL = [
   <p><b>Событие сразу нескольким животным</b> (например, вакцинация загона): быстрые кнопки на главной или «Ветеринария» → отметьте животных в списке. Есть поиск: впишите номер и нажмите Enter — животное отметится.</p>`],
  ['breed', 'Осеменение и окот', `
   <p><b>Поставить на осеменение одну самку:</b> карточка → «+ Добавить событие» → «Поставили на осеменение» → выберите барана (козла) → «Записать». Самка получит статус <b>«На осеменении»</b>, в её карточке — дата, баран и ожидаемый окот (овцы +147 дней, козы +150).</p>
-  <p><b>Сразу несколько:</b> «Стадо» → откройте группу или загон → «Поставить на осеменение» → отметятся все самки списка (лишних снимите) → выберите барана.</p>
+  <p><b>Весь загон или часть:</b> «Стадо» → «По загонам» → нажмите загон → отметьте самок (или никого — тогда весь загон) → «Поставить на осеменение» → выберите барана.</p>
+  <p><b>Всю группу:</b> «Стадо» → откройте группу → «Поставить на осеменение» → отметятся все самки списка (лишних снимите) → выберите барана.</p>
   <p><b>Не покрылась:</b> в карточке самки «Сняли с осеменения».</p>
   <p><b>Окот:</b> в карточке самки «Записать окот» (или «+ Добавить событие» → «Окот») → дата, «Родилось живыми» → для каждого детёныша: номер бирки, пол, вес, порода. <b>Отец подставится сам</b> из осеменения, порода — по родителям (разные — помесь «мать × отец»). Бирку можно не вписывать — будет «номер матери-1», «-2».</p>
   <p>После сохранения у каждого малыша своя карточка с матерью и отцом, датой рождения, загоном матери и весом при рождении.</p>
