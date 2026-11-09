@@ -326,7 +326,7 @@ async function boot(){
         if(S.uid !== user.uid || owner === null || (!owner && !got)) return;
         const ok = owner || (S.userRole && S.userRole !== 'pending' && ROLE[S.userRole]);
         if(ok){ if(!live){ live = true; attach(be); scheduleFeed(); scheduleGroups(); } applyRole(); render(); }
-        else { if(live){ live = false; detachData(); } S.be = be; setMode('pending'); }
+        else { if(live){ live = false; detachData(); } S.be = be; setMode('pending'); if(!S.userDoc) resendPendingRequest(); }
       };
       setMode('loading');
       setTimeout(() => { if(!got && S.uid === user.uid){ try{ S.userRole = localStorage.getItem(rk) || ''; }catch(_){} got = true; decide(); } }, 6000);
@@ -585,7 +585,7 @@ function gateView(){
       return `<div class="login"><div class="loginbrand"><img src="icons/logo-round.png" alt=""><div><div class="eyebrow">${d?.rejected ? 'Заявка отклонена' : 'Заявка отправлена'}</div><h1>Берегиня</h1></div></div>
       ${d ? `<p>${d.rejected ? 'Администратор отклонил заявку. Если это ошибка — свяжитесь с ним.' : `<b>${esc(d.name || S.email)}</b>, ваша заявка у администратора. Как только он назначит вам роль, программа откроется сама — держите эту страницу открытой или зайдите позже.`}</p><p class="muted">Почта: ${esc(S.email)}${d.wish ? ' · ' + esc(d.wish) : ''}</p>`
         : `<p>Для почты <b>${esc(S.email)}</b> доступ ещё не выдан. Отправьте заявку — администратор назначит роль.</p>
-          ${fld('p-name','Фамилия и имя',`<input id="p-name" autocomplete="name" placeholder="Иванов Иван">`)}
+          ${fld('p-name','Фамилия и имя',`<input id="p-name" autocomplete="name" placeholder="Иванов Иван" value="${esc((() => { try{ return JSON.parse(localStorage.getItem('otara-req:' + String(S.email).toLowerCase()) || 'null')?.name || ''; }catch(_){ return ''; } })())}">`)}
           <button class="btn primary" data-act="re-request">Отправить заявку</button>`}
       <button class="btn" data-act="logout">Выйти</button></div>`; }
     case 'noconfig': return `<div class="login"><div class="loginbrand"><img src="icons/logo-round.png" alt=""><div><div class="eyebrow">Учёт овец и коз</div><h1>Берегиня</h1></div></div>
@@ -597,9 +597,28 @@ function gateView(){
   }
   return '';
 }
+// Заявка на доступ. Сразу после регистрации база может ещё «не знать» нового пользователя — поэтому повторяем несколько раз,
+// а данные заявки храним на устройстве: если не ушла, программа отправит её сама при следующем открытии.
 async function sendRequest(email, name, wish){
   const em = String(email || '').toLowerCase();
-  await fb.fs.setDoc(fb.fs.doc(fb.db, 'users', em), {role:'pending', name, wish:wish || '', requested:Date.now()});
+  try{ localStorage.setItem('otara-req:' + em, JSON.stringify({name, wish:wish || ''})); }catch(_){}
+  let err;
+  for(let i = 0; i < 5; i++){
+    try{
+      if(fb.auth.currentUser) await fb.auth.currentUser.getIdToken(i > 0);
+      await fb.fs.setDoc(fb.fs.doc(fb.db, 'users', em), {role:'pending', name, wish:wish || '', requested:Date.now()});
+      try{ localStorage.removeItem('otara-req:' + em); }catch(_){}
+      return;
+    }catch(e){ err = e; await new Promise(r => setTimeout(r, 1200 * (i + 1))); }
+  }
+  throw err;
+}
+let reqResending = false;
+function resendPendingRequest(){
+  if(reqResending || !S.email || S.userDoc) return;
+  let saved = null; try{ saved = JSON.parse(localStorage.getItem('otara-req:' + String(S.email).toLowerCase()) || 'null'); }catch(_){}
+  if(!saved?.name) return;
+  reqResending = true; sendRequest(S.email, saved.name, saved.wish).catch(() => {}).finally(() => { reqResending = false; });
 }
 function bindGate(){
   const f = $('#lf');
