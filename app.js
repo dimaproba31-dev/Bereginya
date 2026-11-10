@@ -913,7 +913,7 @@ function herdView(){
       <button class="gbtn wide" data-f="active"><span>Весь список животных</span><b>${act.length} ›</b></button>`;
   }
   let h = `<div class="listtop"><button class="back" data-f="">‹ Стадо</button>${search}
-    <div class="kv listhead"><h2>${esc(q && !S.filter ? 'Поиск' : filterName(S.filter))} · ${list.length}</h2><span class="actions" style="margin:0">${S.filter!=='gone' && canCreate('birth') && list.some(a => a.status==='active' && a.sex==='f' && !insemOf(a)) ? `<button class="btn small" data-act="mate-list">Поставить на осеменение</button>` : ''}${S.filter!=='gone' && list.some(a => a.status==='active') ? `<button class="btn small adm" data-act="regroup">Перевести в группу</button>` : ''}</span></div></div>`;
+    <div class="kv listhead"><h2>${esc(q && !S.filter ? 'Поиск' : filterName(S.filter))} · ${list.length}</h2><span class="actions" style="margin:0">${canXl('herd') && list.length ? `<button class="btn small" data-act="list-xl">Выгрузить в Excel</button>` : ''}${S.filter!=='gone' && canCreate('birth') && list.some(a => a.status==='active' && a.sex==='f' && !insemOf(a)) ? `<button class="btn small" data-act="mate-list">Поставить на осеменение</button>` : ''}${S.filter!=='gone' && list.some(a => a.status==='active') ? `<button class="btn small adm" data-act="regroup">Перевести в группу</button>` : ''}</span></div></div>`;
   if(!list.length) return h + `<div class="empty"><p>${S.filter==='nogroup' ? 'Все животные распределены по группам.' : 'Под этот фильтр никто не подходит.'}</p></div>`;
   return h + `<div class="list">` + list.map(a => {
     const w = lastWeight(a.id), g = groupOf(a);
@@ -1420,6 +1420,8 @@ function bindView(){
   on('[data-act]', b => ({
     'add-animal':() => animalForm(), 'add-fin':() => financeForm(), 'add-ration':() => rationForm(),
     'add-item':() => itemForm({cat:S.stockCat}), 'add-routine':() => routineForm(null), 'seed-plan':seedPlan, 'plan-ics':planIcs, 'plan-xl':planXl, 'daily-xl':dailyXl, 'daily-share':dailyShare, 'add-scheme':() => schemeForm(null, S.vetKind), 'seed-scheme':seedScheme, 'veh-all-gsm':allToGsm, 'seed-items':seedItems, 'milkout':() => milkOutForm(),
+    'list-xl':() => { const q = S.q.trim().toLowerCase(); const list = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, a.qr, groupName(a.species, groupOf(a)), penShort(a.pen), penLong(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).sort(penSort);
+      const name = (q && !S.filter ? `Поиск «${S.q.trim()}»` : filterName(S.filter)).replace(/[\\/:*?"<>|]/g, ''); listXl(list, name); },
     'mate-list':() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => a.status==='active' && a.sex==='f' && !insemOf(a)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); eventForm({type:'mating', animalIds:ids}); }, 'feed-log':feedLogSheet, 'feeding-xl':feedingXl, 'ration-clear-old':clearOldRationNos, akt:aktSheet, 'q-birth':() => eventForm({type:'birth'}), 'q-vet':() => eventForm({type:'vac'}), 'q-feed':() => moveForm({cat:'feed', kind:'in'}), 'q-fuel':() => moveForm({cat:'fuel', kind:'out'}), 'add-fuel':() => itemForm({cat:'fuel'}), 'add-vehicle':() => itemForm({cat:'vehicle'}), milkquick:() => milkQuickForm(S.milkDate||today(), defaultSession()), import:importSheet, regroup:() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); regroupSheet(ids, filterName(S.filter)); }, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
     logout:() => fb && fb.au.signOut(fb.auth)
   })[b.dataset.act]?.());
@@ -2480,6 +2482,7 @@ function penSheet(pid){
     ${list.length && canCreate('herd') ? `<div class="list scroll">${list.map(a => `<label class="row pickrow"><input type="checkbox" name="pm" value="${a.id}"><span class="tag">${esc(a.tag)}</span><span class="sub">${esc(animalTitle(a))} ${a.sex==='f'?'♀':'♂'} · ${esc(age(a.birth)||SPECIES[a.species])}</span></label>`).join('')}</div>
       <div class="movebar">${fld('p-to','Переместить отмеченных в',`<select id="p-to">${penOptions('', '— выберите загон —')}</select>`)}<button class="btn primary" id="pmove" disabled>Переместить</button></div>`
       : list.length ? '' : `<div class="empty"><p>${isPen ? 'В загоне никого нет.' : 'Все животные распределены по загонам.'}</p></div>`}
+    ${canXl('herd') && list.length ? `<div class="actions"><button class="btn" id="pxl">Выгрузить загон в Excel</button></div>` : ''}
     ${canCreate('birth') && list.some(a => a.sex === 'f' && !insemOf(a)) ? `<div class="actions"><button class="btn" id="pmate">Поставить на осеменение${canCreate('herd') ? ' (отмеченных самок)' : ''}</button></div>` : ''}
     ${isPen && canCreate('herd') ? `<div class="actions"><button class="btn" id="padd">Добавить животное в этот загон</button></div>` : ''}`;
   openSheet(isPen ? penLong(pid) : 'Без загона', body, s => {
@@ -2496,6 +2499,7 @@ function penSheet(pid){
     const mt = s.querySelector('#pmate'), fem = ids => ids.map(byId).filter(a => a && a.sex === 'f' && !insemOf(a)).map(a => a.id);
     const upd = () => { if(mv){ const n = pm().length; mv.disabled = !n || !to.value; mv.textContent = n ? `Переместить (${n})` : 'Переместить'; }
       if(mt){ const n = fem(pm()).length; mt.textContent = n ? `Поставить на осеменение (${n})` : 'Поставить на осеменение — всех самок загона'; } };
+    const px = s.querySelector('#pxl'); if(px) px.onclick = () => listXl(list.slice().sort(tagSort), penLong(pid) + (penLabel(pid) ? ' — ' + penLabel(pid) : ''));
     if(mt) mt.onclick = () => { const sel = fem(pm()); eventForm({type:'mating', animalIds: sel.length ? sel : fem(list.map(a => a.id))}); };
     s.querySelectorAll('input[name=pm]').forEach(c => c.onchange = upd);
     if(to) to.onchange = upd;
@@ -2610,6 +2614,7 @@ const MANUAL = [
  ['reports', 'Отчёты, Excel, акт выбытия', `
   <ul><li><b>Отчёт за текущий день</b> (главная или «Ещё»): поголовье по группам, окоты и выбытие за день, молоко утро/вечер и средний удой, отгрузки, остатки кормов и ГСМ, здоровье. Кнопки «Скачать в Excel» и «Отправить текстом» (в мессенджер). Стрелки ‹ › — другой день.</li>
   <li><b>Выгрузка в Excel</b> («Ещё»): выберите период и листы → «Скачать Excel». Каждому доступны листы по своим разделам.</li>
+  <li><b>Список одной группы или загона:</b> «Стадо» → нажмите группу (ярки, дойные, на мясо…), «На осеменении» или найдите поиском → <b>«Выгрузить в Excel»</b>. В карточке загона — «Выгрузить загон в Excel».</li>
   <li><b>Акт выбытия из стада</b> (форма СП-54, «Ещё»): период (например 01.10–31.10), номер акта, дата, ФИО ответственного → программа соберёт всех со статусом «Забой» и «Пал(а)» за период; упитанность, массу и диагноз можно поправить прямо там → «Скачать акт в Excel».</li>
   <li><b>Сводка</b> — поголовье, приплод, молоко, деньги за год. <b>Финансы</b> — доходы и расходы по месяцам («Добавить запись»).</li></ul>
   <p>Файлы сохраняются в «Загрузки» телефона или компьютера.</p>`],
@@ -3356,24 +3361,11 @@ function xlSheets(from, to, secs){
   const inP = d => d && d >= from && d <= to;
   const period = `Период: ${fmtD(from)} — ${fmtD(to)}`;
   const sum = (rows, i) => round(rows.reduce((s, r) => s + (+r[i] || 0), 0), 3);
-  const tagOf = id => byId(id)?.tag || '';
-  const barnOf = a => PEN[a.pen]?.barn.name || '';
   const out = [];
 
   if(secs.herd){
     const list = S.animals.slice().sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || penSort(a, b));
-    out.push({name:'Стадо', title:'Стадо', note:`На ${fmtD(today())}. Голов в стаде: ${S.animals.filter(a => a.status === 'active').length}`,
-      cols:[{h:'Бирка',w:10},{h:'Кличка',w:12},{h:'Вид',w:7},{h:'Пол',w:6},{h:'Порода',w:14},{h:'Помещение',w:12},{h:'Загон',w:7},{h:'Группа',w:18},{h:'Категория в файле',w:14},{h:'В загоне с',w:12,t:'d'},
-        {h:'Дата рождения',w:12,t:'d'},{h:'Возраст',w:12},{h:'Мать',w:10},{h:'Отец',w:10},{h:'Статус',w:11},{h:'Дата выбытия',w:12,t:'d'},
-        {h:'Последний вес, кг',w:10,t:'n'},{h:'Дата взвешивания',w:12,t:'d'},{h:'Последний окот',w:12,t:'d'},{h:'Детёнышей',w:9,t:'i'},{h:'Номера и пол детёнышей',w:24},
-        {h:'Надой за 7 дн., л/сут',w:10,t:'n'},{h:'Заметка',w:24},{h:'QR-код',w:16}],
-      rows:list.map(a => {
-        const w = eventsFor(a.id).find(e => e.type === 'weight' && e.weight), lb = a.sex === 'f' ? lastBirth(a.id) : null, mk = a.sex === 'f' ? animalMilk(a.id) : null;
-        return [String(a.tag), a.name || '', SPECIES[a.species], a.sex === 'f' ? 'Самка' : 'Самец', a.breed || '', barnOf(a), PEN[a.pen]?.n ?? '', groupName(a.species, groupOf(a)), a.cat || '', a.since || '',
-          a.birth || '', age(a.birth), tagOf(a.motherId) || a.motherText || '', tagOf(a.fatherId) || a.fatherText || '', STATUS[a.status] || '', a.outDate || '',
-          w ? +w.weight : '', w ? w.date : '', lb ? lb.ev.date : '', lb ? (+lb.ev.count || lb.kids.length) : '',
-          lb ? lb.kids.map(k => `${k.tag} ${k.sex === 'f' ? '♀' : '♂'}`).join(', ') : '', mk ? round(mk.avg, 2) : '', a.note || '', a.qr || ''];
-      })});
+    out.push(herdSheetSpec(list, 'Стадо', `На ${fmtD(today())}. Голов в стаде: ${S.animals.filter(a => a.status === 'active').length}`));
   }
   if(secs.births){
     const rows = [];
@@ -3608,6 +3600,29 @@ async function saveFile(name, blob){
 }
 
 /* ----- Окно выгрузки ----- */
+const tagOf = id => byId(id)?.tag || '';
+const barnOf = a => PEN[a.pen]?.barn.name || '';
+// Лист «Стадо» для Excel — общий для полной выгрузки и выгрузки выбранного списка
+function herdSheetSpec(list, title, note){
+  return {name:title.slice(0, 31), title, note,
+      cols:[{h:'Бирка',w:10},{h:'Кличка',w:12},{h:'Вид',w:7},{h:'Пол',w:6},{h:'Порода',w:14},{h:'Помещение',w:12},{h:'Загон',w:7},{h:'Группа',w:18},{h:'Категория в файле',w:14},{h:'В загоне с',w:12,t:'d'},
+        {h:'Дата рождения',w:12,t:'d'},{h:'Возраст',w:12},{h:'Мать',w:10},{h:'Отец',w:10},{h:'Статус',w:11},{h:'Дата выбытия',w:12,t:'d'},
+        {h:'Последний вес, кг',w:10,t:'n'},{h:'Дата взвешивания',w:12,t:'d'},{h:'Последний окот',w:12,t:'d'},{h:'Детёнышей',w:9,t:'i'},{h:'Номера и пол детёнышей',w:24},
+        {h:'Надой за 7 дн., л/сут',w:10,t:'n'},{h:'Заметка',w:24},{h:'QR-код',w:16}],
+      rows:list.map(a => {
+        const w = eventsFor(a.id).find(e => e.type === 'weight' && e.weight), lb = a.sex === 'f' ? lastBirth(a.id) : null, mk = a.sex === 'f' ? animalMilk(a.id) : null;
+        return [String(a.tag), a.name || '', SPECIES[a.species], a.sex === 'f' ? 'Самка' : 'Самец', a.breed || '', barnOf(a), PEN[a.pen]?.n ?? '', groupName(a.species, groupOf(a)), a.cat || '', a.since || '',
+          a.birth || '', age(a.birth), tagOf(a.motherId) || a.motherText || '', tagOf(a.fatherId) || a.fatherText || '', STATUS[a.status] || '', a.outDate || '',
+          w ? +w.weight : '', w ? w.date : '', lb ? lb.ev.date : '', lb ? (+lb.ev.count || lb.kids.length) : '',
+          lb ? lb.kids.map(k => `${k.tag} ${k.sex === 'f' ? '♀' : '♂'}`).join(', ') : '', mk ? round(mk.avg, 2) : '', a.note || '', a.qr || ''];
+      })};
+}
+function listXl(list, name){
+  if(!list.length){ toast('Список пуст'); return; }
+  const sp = {sheep:list.filter(a => a.species === 'sheep').length, goat:list.filter(a => a.species === 'goat').length};
+  const note = `На ${fmtD(today())}. Голов: ${list.length}${sp.sheep && sp.goat ? ` (овец ${sp.sheep}, коз ${sp.goat})` : ''}`;
+  saveFile(`${name} ${today()}.xlsx`, XL.build([herdSheetSpec(list, name, note)])).then(ok => ok && toast(`«${name}»: ${heads(list.length)} — сохранено в «Загрузки»`));
+}
 function excelSheet(only){
   const t = today(), y = t.slice(0, 4), m = t.slice(0, 7);
   const prevM = iso(new Date(+y, +m.slice(5) - 2, 1)).slice(0, 7);
