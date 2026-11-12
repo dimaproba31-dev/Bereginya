@@ -925,7 +925,7 @@ function herdView(){
       <button class="gbtn wide" data-f="active"><span>Весь список животных</span><b>${act.length} ›</b></button>`;
   }
   let h = `<div class="listtop"><button class="back" data-f="">‹ Стадо</button>${search}
-    <div class="kv listhead"><h2>${esc(q && !S.filter ? 'Поиск' : filterName(S.filter))} · ${list.length}</h2><span class="actions" style="margin:0">${canXl('herd') && list.length ? `<button class="btn small" data-act="list-xl">Выгрузить в Excel</button>` : ''}${S.filter!=='gone' && canCreate('birth') && list.some(a => a.status==='active' && a.sex==='f' && !insemOf(a)) ? `<button class="btn small" data-act="mate-list">Поставить на осеменение</button>` : ''}${S.filter!=='gone' && list.some(a => a.status==='active') ? `<button class="btn small adm" data-act="regroup">Перевести в группу</button>` : ''}</span></div></div>`;
+    <div class="kv listhead"><h2>${esc(q && !S.filter ? 'Поиск' : filterName(S.filter))} · ${list.length}</h2><span class="actions" style="margin:0">${S.filter && S.filter.startsWith('b:') && canEdit('herd') ? `<button class="btn small" data-act="breed-rename">Переименовать породу</button>` : ''}${canXl('herd') && list.length ? `<button class="btn small" data-act="list-xl">Выгрузить в Excel</button>` : ''}${S.filter!=='gone' && canCreate('birth') && list.some(a => a.status==='active' && a.sex==='f' && !insemOf(a)) ? `<button class="btn small" data-act="mate-list">Поставить на осеменение</button>` : ''}${S.filter!=='gone' && list.some(a => a.status==='active') ? `<button class="btn small adm" data-act="regroup">Перевести в группу</button>` : ''}</span></div></div>`;
   if(!list.length) return h + `<div class="empty"><p>${S.filter==='nogroup' ? 'Все животные распределены по группам.' : 'Под этот фильтр никто не подходит.'}</p></div>`;
   return h + `<div class="list">` + list.map(a => {
     const w = lastWeight(a.id), g = groupOf(a);
@@ -1433,7 +1433,7 @@ function bindView(){
   on('[data-act]', b => ({
     'add-animal':() => animalForm(), 'add-fin':() => financeForm(), 'add-ration':() => rationForm(),
     'add-item':() => itemForm({cat:S.stockCat}), 'add-routine':() => routineForm(null), 'seed-plan':seedPlan, 'plan-ics':planIcs, 'plan-xl':planXl, 'daily-xl':dailyXl, 'daily-share':dailyShare, 'add-scheme':() => schemeForm(null, S.vetKind), 'seed-scheme':seedScheme, 'veh-all-gsm':allToGsm, 'seed-items':seedItems, 'milkout':() => milkOutForm(),
-    'breeds-xl':breedsXl,
+    'breeds-xl':breedsXl, 'breed-rename':breedRename,
     'list-xl':() => { const q = S.q.trim().toLowerCase(); const list = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, a.qr, groupName(a.species, groupOf(a)), penShort(a.pen), penLong(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).sort(penSort);
       const name = (q && !S.filter ? `Поиск «${S.q.trim()}»` : filterName(S.filter)).replace(/[\\/:*?"<>|]/g, ''); listXl(list, name); },
     'mate-list':() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => a.status==='active' && a.sex==='f' && !insemOf(a)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); eventForm({type:'mating', animalIds:ids}); }, 'feed-log':feedLogSheet, 'feeding-xl':feedingXl, 'ration-clear-old':clearOldRationNos, akt:aktSheet, 'q-birth':() => eventForm({type:'birth'}), 'q-vet':() => eventForm({type:'vac'}), 'q-feed':() => moveForm({cat:'feed', kind:'in'}), 'q-fuel':() => moveForm({cat:'fuel', kind:'out'}), 'add-fuel':() => itemForm({cat:'fuel'}), 'add-vehicle':() => itemForm({cat:'vehicle'}), milkquick:() => milkQuickForm(S.milkDate||today(), defaultSession()), import:importSheet, regroup:() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); regroupSheet(ids, filterName(S.filter)); }, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
@@ -2643,7 +2643,8 @@ const MANUAL = [
   <ul><li><b>Стадо по загонам</b> (листы «Овчарня 1», «Овчарня 2», «Козлятник»): покажет, куда попадут животные, повторы бирок и ошибки. Галочка <b>«Заменить всё стадо данными файла»</b> — удалит животных, которых нет в файле, и всю историю, кроме лечения.</li>
   <li><b>Журнал молока</b>: галочка «Заменить всё молоко в программе данными файла».</li>
   <li><b>Склад кормов</b> и <b>учёт препаратов</b> — справочник, приход, расход.</li>
-  <li><b>Реестр с QR-кодами</b> (столбцы «№ животного», «Кюаркод», «Год/дата рождения») — только дополнит карточки датой рождения и QR-кодом, ничего больше не меняя.</li></ul>
+  <li><b>Реестр с QR-кодами</b> (столбцы «№ животного», «Кюаркод», «Год/дата рождения», «Порода») — только дополнит карточки датой рождения, QR-кодом и породой, ничего больше не меняя.</li></ul>
+  <p><b>Переименовать или объединить породу</b> (например «Дорс» и «Дорсет»): «Стадо» → «По породам» → нажмите породу → «Переименовать породу» → впишите название или выберите существующую.</p>
   <p><b>Резервная копия</b> («Ещё → Сохранить копию») — файл со всеми записями, сохраняйте раз в месяц.</p>`],
  ['faq', 'Если что-то не так', `
   <ul><li><b>«Неверная почта или пароль»</b> — проверьте раскладку и пробелы; забыли пароль — к администратору.</li>
@@ -3632,6 +3633,20 @@ function herdSheetSpec(list, title, note){
           lb ? lb.kids.map(k => `${k.tag} ${k.sex === 'f' ? '♀' : '♂'}`).join(', ') : '', mk ? round(mk.avg, 2) : '', a.note || '', a.qr || ''];
       })};
 }
+// Переименовать / объединить породу у всех животных этого вида (например «Дорс» → «Дорсет»)
+function breedRename(){
+  const f = S.filter, i = f.indexOf(':', 2), sp = f.slice(2, i), k = decodeURIComponent(f.slice(i + 1));
+  const list = S.animals.filter(a => a.species === sp && breedKey(a) === k), cur = list[0]?.breed || '';
+  const names = [...new Set(S.animals.filter(a => a.species === sp && a.breed).map(a => String(a.breed).replace(/\s+/g, ' ').trim()))].sort((a, b) => a.localeCompare(b, 'ru'));
+  openSheet('Переименовать породу', `<p class="muted" style="margin:0">${SPECIES_PL[sp]}: «${esc(cur || 'порода не указана')}» — ${heads(list.length)} (с выбывшими). Впишите новое название или выберите существующую породу, чтобы объединить.</p>
+    ${fld('br-new', 'Новое название', `<input id="br-new" list="br-names" value="${esc(cur)}" autocomplete="off"><datalist id="br-names">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>`)}
+    <div class="actions"><button class="btn primary" id="br-go">Переименовать</button></div>`, s => {
+    s.querySelector('#br-go').onclick = () => { const v = s.querySelector('#br-new').value.replace(/\s+/g, ' ').trim(); if(!v){ toast('Впишите название'); return; }
+      silently(() => list.forEach(a => store.merge('animals', a.id, {breed:v})));
+      journalNote(`Порода «${cur || 'не указана'}» → «${v}» (${SPECIES_PL[sp].toLowerCase()}): ${heads(list.length)}`);
+      S.filter = `b:${sp}:${encodeURIComponent(norm(v))}`; closeSheet(); toast(`Готово: ${heads(list.length)}`); render(); };
+  }, 'brren');
+}
 function breedsXl(){
   const bl = breedList(); if(!bl.length) return;
   const used = new Set(), sheetName = n => { let b = n.replace(/[\\/:*?\[\]]/g, ' ').slice(0, 28).trim() || 'Лист', x = b, i = 2; while(used.has(x.toLowerCase())) x = `${b.slice(0, 26)} ${i++}`; used.add(x.toLowerCase()); return x; };
@@ -4110,21 +4125,22 @@ function buildCardsPlan(sheets){
   for(const sh of sheets){
     const hi = headerAt(sh.rows, /кюаркод|qr/); if(hi < 0) continue;
     const h = (sh.rows[hi] || []).map(norm), col = re => h.findIndex(x => re.test(x));
-    const ct = col(/инд\.?\s*№|№\s*животн|бирк|^номер/), cq = col(/кюаркод|qr/), cb = col(/рожд/), cs = col(/^пол/);
+    const ct = col(/инд\.?\s*№|№\s*животн|бирк|^номер/), cq = col(/кюаркод|qr/), cb = col(/рожд/), cs = col(/^пол/), cbr = col(/^порода/);
     if(ct < 0) continue;
     const nm = norm(sh.name), spSheet = /коз/.test(nm) ? 'goat' : /овц|овец/.test(nm) ? 'sheep' : '';
     sh.rows.slice(hi + 1).forEach((r, i) => {
       const raw = r?.[ct]; if(raw == null || raw === '') return;
       const {tag} = splitTag(raw); if(!tag) return;
       const sx = norm(r[cs] ?? ''), species = spSheet || (/коз/.test(sx) ? 'goat' : 'sheep');
-      rows.push({tag:String(tag), species, birth:xlDate(r[cb]), qr:String(r[cq] ?? '').trim(), where:`${sh.name}, строка ${hi + i + 2}`});
+      const brRaw = cbr >= 0 ? String(r[cbr] ?? '').replace(/\s+/g, ' ').trim() : '', breed = brRaw && !/^none$/i.test(brRaw) ? brRaw[0].toUpperCase() + brRaw.slice(1) : '';
+      rows.push({tag:String(tag), species, birth:cb >= 0 ? xlDate(r[cb]) : '', qr:cq >= 0 ? String(r[cq] ?? '').trim() : '', breed, where:`${sh.name}, строка ${hi + i + 2}`});
     });
   }
   const items = [], miss = [];
   for(const x of rows){
     const a = S.animals.find(z => z.species === x.species && String(z.tag) === x.tag && z.status === 'active') || S.animals.find(z => z.species === x.species && String(z.tag) === x.tag);
     if(!a){ miss.push(x); continue; }
-    items.push({a, ...x, newBirth: x.birth && !a.birth, diffBirth: x.birth && a.birth && a.birth !== x.birth, newQr: x.qr && !a.qr, diffQr: x.qr && a.qr && a.qr !== x.qr});
+    items.push({a, ...x, newBirth: x.birth && !a.birth, diffBirth: x.birth && a.birth && a.birth !== x.birth, newQr: x.qr && !a.qr, diffQr: x.qr && a.qr && a.qr !== x.qr, newBreed: x.breed && !a.breed, diffBreed: x.breed && a.breed && norm(a.breed) !== norm(x.breed)});
   }
   const seen = new Set(items.map(x => x.a.id));
   const stillNo = S.animals.filter(a => a.status === 'active' && !a.birth && !items.some(x => x.a.id === a.id && x.birth));
@@ -4132,22 +4148,26 @@ function buildCardsPlan(sheets){
 }
 function cardsImportView(res, plan, fname){
   const nb = plan.items.filter(x => x.newBirth).length, nq = plan.items.filter(x => x.newQr).length, db = plan.items.filter(x => x.diffBirth), dq = plan.items.filter(x => x.diffQr);
+  const nbr = plan.items.filter(x => x.newBreed).length, dbr = plan.items.filter(x => x.diffBreed), hasBr = plan.rows.some(x => x.breed);
+  const brCount = {}; plan.items.forEach(x => { if(x.breed) brCount[`${x.species === 'goat' ? 'Козы' : 'Овцы'}: ${x.breed}`] = (brCount[`${x.species === 'goat' ? 'Козы' : 'Овцы'}: ${x.breed}`] || 0) + 1; });
   res.innerHTML = `<div class="stats"><div class="stat"><div class="v">${plan.items.length}</div><div class="l">из ${plan.rows.length} в файле нашлись в программе по номеру</div></div>
-      <div class="stat"><div class="v">${nb} / ${nq}</div><div class="l">получат дату рождения / QR-код</div></div></div>
-    <p class="muted" style="margin:0">Меняются только дата рождения и QR-код. Загон, группа, пол, история — не трогаются, новые животные не заводятся.</p>
-    ${db.length || dq.length ? `<div class="panel" style="gap:8px"><label class="row pickrow" style="grid-template-columns:auto 1fr;align-items:start"><input type="checkbox" id="cd-over"><span><b>Заменить отличающиеся значения файлом</b><br><span class="muted">В программе уже другое: дата рождения — у ${db.length}, QR-код — у ${dq.length}. Без галочки они останутся как есть.</span></span></label>
-      <details class="issues info"><summary>Список отличий</summary><ul>${[...db.map(x => `<li><b>№ ${esc(x.tag)}</b> — дата: в программе ${fmtD(x.a.birth)}, в файле ${fmtD(x.birth)}</li>`), ...dq.map(x => `<li><b>№ ${esc(x.tag)}</b> — QR: в программе ${esc(x.a.qr)}, в файле ${esc(x.qr)}</li>`)].join('')}</ul></details></div>` : ''}
+      <div class="stat"><div class="v">${nb} / ${nq}${hasBr ? ' / ' + nbr : ''}</div><div class="l">получат дату рождения / QR-код${hasBr ? ' / породу' : ''}</div></div></div>
+    <p class="muted" style="margin:0">Меняются только дата рождения, QR-код${hasBr ? ' и порода' : ''}. Загон, группа, пол, история — не трогаются, новые животные не заводятся.</p>
+    ${hasBr ? `<details class="issues info"><summary>Породы в файле: ${Object.keys(brCount).length}</summary><ul>${Object.entries(brCount).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<li>${esc(k)} — ${n}</li>`).join('')}</ul></details>` : ''}
+    ${db.length || dq.length || dbr.length ? `<div class="panel" style="gap:8px"><label class="row pickrow" style="grid-template-columns:auto 1fr;align-items:start"><input type="checkbox" id="cd-over"><span><b>Заменить отличающиеся значения файлом</b><br><span class="muted">В программе уже другое: дата рождения — у ${db.length}, QR-код — у ${dq.length}${hasBr ? `, порода — у ${dbr.length}` : ''}. Без галочки они останутся как есть.</span></span></label>
+      <details class="issues info"><summary>Список отличий</summary><ul>${[...db.map(x => `<li><b>№ ${esc(x.tag)}</b> — дата: в программе ${fmtD(x.a.birth)}, в файле ${fmtD(x.birth)}</li>`), ...dq.map(x => `<li><b>№ ${esc(x.tag)}</b> — QR: в программе ${esc(x.a.qr)}, в файле ${esc(x.qr)}</li>`), ...dbr.map(x => `<li><b>№ ${esc(x.tag)}</b> — порода: в программе ${esc(x.a.breed)}, в файле ${esc(x.breed)}</li>`)].join('')}</ul></details></div>` : ''}
     ${plan.miss.length ? `<details class="issues"><summary>Нет в программе: ${plan.miss.length} — пропускаются</summary><ul>${plan.miss.map(x => `<li><b>№ ${esc(x.tag)}</b> (${x.species === 'goat' ? 'коза' : 'овца'}) — ${esc(x.where)}</li>`).join('')}</ul></details>` : ''}
     ${plan.stillNo.length ? `<details class="issues info"><summary>Останутся без даты рождения: ${plan.stillNo.length}</summary><ul>${plan.stillNo.slice(0, 300).map(a => `<li>№ ${esc(a.tag)} — ${a.species === 'goat' ? 'коза' : 'овца'}, ${esc(penShort(a.pen) || 'без загона')}</li>`).join('')}</ul></details>` : ''}
-    <div class="actions"><button class="btn primary" id="cdgo" ${nb || nq || db.length || dq.length ? '' : 'disabled'}>Дополнить карточки</button></div>`;
+    <div class="actions"><button class="btn primary" id="cdgo" ${nb || nq || nbr || db.length || dq.length || dbr.length ? '' : 'disabled'}>Дополнить карточки</button></div>`;
   res.querySelector('#cdgo').onclick = () => {
-    const over = res.querySelector('#cd-over')?.checked; let b = 0, q = 0;
+    const over = res.querySelector('#cd-over')?.checked; let b = 0, q = 0, br = 0;
     silently(() => plan.items.forEach(x => { const ch = {};
       if(x.newBirth || (over && x.diffBirth)){ ch.birth = x.birth; b++; }
       if(x.newQr || (over && x.diffQr)){ ch.qr = x.qr; q++; }
+      if(x.newBreed || (over && x.diffBreed)){ ch.breed = x.breed; br++; }
       if(Object.keys(ch).length) store.merge('animals', x.a.id, ch); }));
-    journalNote(`Дополнены карточки из «${fname}»: дата рождения — ${b}, QR-код — ${q}`);
-    toast(`Готово: дата рождения — ${b}, QR-код — ${q}`); closeSheet();
+    journalNote(`Дополнены карточки из «${fname}»: дата рождения — ${b}, QR-код — ${q}, порода — ${br}`);
+    toast(`Готово: дата рождения — ${b}, QR-код — ${q}, порода — ${br}`); closeSheet();
   };
 }
 // Журнал молока: листы «Козье молоко» / «Овечье молоко», столбцы Дата | Утренний | Вечерний | Выпойка | Забрано | Остаток
