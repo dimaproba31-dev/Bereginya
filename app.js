@@ -234,7 +234,7 @@ const FIELD = {tag:'бирка', name:'кличка', species:'вид', sex:'п�
   motherId:'мать', fatherId:'отец', note:'заметка', outDate:'дата выбытия', since:'в загоне с', type:'событие', date:'дата', drug:'препарат', dose:'доза',
   nextDate:'повтор', doneNext:'повтор сделан', weight:'вес', sireId:'производитель', count:'приплод', animalIds:'животные', kind:'тип', qty:'количество',
   item:'позиция', vehicle:'транспорт', price:'сумма', amount:'сумма', category:'статья', liters:'литры', to:'получатель', extra:'общий надой', session:'дойка',
-  label:'назначение', ration:'рацион', items:'состав', mode:'норма', unit:'единица', plate:'госномер', trailer:'номер прицепа', vtype:'тип техники', gsm:'в ГСМ', who:'кто заправлял / выдал', expiry:'годен до', min:'мин. остаток', route:'как вводить', days:'дней', info:'особенности', withdrawal:'срок ожидания', series:'серия', number:'номер', paused:'пауза', outFat:'упитанность', outWeight:'живая масса', outReason:'диагноз / причина', from:'с даты', skipped:'не списывать', locked:'исправлено вручную', qr:'QR-код'};
+  label:'назначение', ration:'рацион', items:'состав', mode:'норма', unit:'единица', plate:'госномер', trailer:'номер прицепа', vtype:'тип техники', gsm:'в ГСМ', who:'кто заправлял / выдал', expiry:'годен до', min:'мин. остаток', route:'как вводить', days:'дней', info:'особенности', withdrawal:'срок ожидания', series:'серия', number:'номер', paused:'пауза', outFat:'упитанность', outWeight:'живая масса', outReason:'диагноз / причина', from:'с даты', skipped:'не списывать', locked:'исправлено вручную', qr:'QR-код', soldTo:'покупатель', soldWeight:'вес при продаже', salePrice:'сумма продажи', price:'цена'};
 function fmtVal(k, v, d){
   if(v===undefined || v===null || v==='' || v===DEL) return '—';
   if(k==='pen') return penShort(v) || '—';
@@ -529,7 +529,7 @@ function planItems(){
 const urgency = date => { const d = daysBetween(today(), date); return d < 0 ? 'over' : d <= 7 ? 'soon' : 'later'; };
 
 /* ===== Отрисовка ===== */
-const NAV_OF = {yplan:'more', genetics:'more', daily:'home', events:'home', plan:'home', vet:'herd', people:'more', feedsheet:'more', feeding:'more', manual:'more', flow:'more', log:'more', home:'home', herd:'herd', pens:'herd', milk:'milk', stock:'stock', more:'more', money:'more', stats:'more'};
+const NAV_OF = {yplan:'more', genetics:'more', daily:'home', events:'home', plan:'home', vet:'herd', people:'more', feedsheet:'more', feeding:'more', manual:'more', flow:'more', ewes:'more', gain:'more', cost:'more', sales:'more', log:'more', home:'home', herd:'herd', pens:'herd', milk:'milk', stock:'stock', more:'more', money:'more', stats:'more'};
 function updateClock(){ const c = $('#clock'); if(!c) return; const d = new Date(); c.innerHTML = `<b>${d.toLocaleDateString('ru-RU', {day:'numeric', month:'long', year:'numeric'}).replace(/\s*г\.?$/, '')}</b>${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 setInterval(updateClock, 30000);
 function render(){
@@ -550,7 +550,7 @@ function render(){
   $('#fab').hidden = !({herd:canCreate('herd') && S.herdMode!=='pens', milk:canCreate('milk'), stock: S.stockCat==='tech' ? canManage('fuel') : canCreate(catDomain(S.stockCat)), plan:canCreate('herd') || canCreate('vet'), money:canCreate('fin')})[S.tab];
   let html = '';
   if(S.demo) html += `<div class="banner">Демо-режим: всё хранится только в этом браузере.${S.animals.some(a => a.demo) ? ` Сейчас открыт пример хозяйства. <button class="link adm" data-act="clear-demo">Очистить пример</button>` : ''}</div>`;
-  html += ({yplan:yplanView, genetics:genView, daily:dailyView, log:logView, people:peopleView, feedsheet:feedSheetView, feeding:feedingView, manual:manualView, flow:flowView, vet:vetView, events:eventsView, home: role==='feeder' ? feederHome : role==='mechanic' ? mechHome : homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
+  html += ({yplan:yplanView, genetics:genView, daily:dailyView, log:logView, people:peopleView, feedsheet:feedSheetView, feeding:feedingView, manual:manualView, flow:flowView, ewes:ewesView, gain:gainView, cost:costView, sales:salesView, vet:vetView, events:eventsView, home: role==='feeder' ? feederHome : role==='mechanic' ? mechHome : homeView, herd:() => herdTabs() + (S.herdMode==='pens' ? pensView() : herdView()), pens:() => { S.tab='herd'; S.herdMode='pens'; return herdTabs() + pensView(); }, milk:milkView, stock:stockView, more:moreView, plan:()=>planView(plan), money:moneyView, stats:statsView})[S.tab]();
   const focus = document.activeElement?.id, pos = document.activeElement?.selectionStart;
   v.innerHTML = html;
   bindView();
@@ -1069,13 +1069,13 @@ const ROLE_DEF = {
   pending: {l:'Нет доступа (заявка)', d:'Новая заявка или отключённый сотрудник — программа не открывается'}
 };
 const VET_TYPES = new Set(['ill', 'vac', 'treat', 'vit', 'dose', 'result']);
-const ALL_TABS = ['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'plan', 'money', 'stats', 'feedsheet', 'feeding', 'manual', 'flow', 'yplan', 'genetics', 'daily'];
+const ALL_TABS = ['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'plan', 'money', 'stats', 'feedsheet', 'feeding', 'manual', 'flow', 'ewes', 'gain', 'cost', 'sales', 'yplan', 'genetics', 'daily'];
 const ROLE = {
   admin:   {create:'*', edit:'*', manage:'*', tabs:[...ALL_TABS, 'log', 'people'], stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
   manager: {create:['herd', 'birth', 'manip', 'milk', 'feed', 'fuel', 'fin', 'plan'], edit:['herd', 'birth', 'manip', 'milk', 'feed', 'fuel', 'fin', 'plan'], manage:['herd', 'feed', 'fuel', 'plan'],
             tabs:[...ALL_TABS.filter(t => t !== 'vet'), 'log'], stock:['feed', 'fuel', 'tech'], xl:['herd', 'births', 'pens', 'feed', 'fuel', 'tech', 'milk', 'milkHeads', 'milkOut', 'finance']},
   foreman: {create:['herd', 'birth', 'vet', 'manip', 'milk', 'feed', 'fuel', 'fin', 'plan'], edit:[], manage:[], tabs:ALL_TABS, stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
-  vet:     {create:['vet', 'birth', 'manip', 'milk', 'plan'], edit:['vet', 'manip', 'milk'], manage:['vet'], tabs:['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'daily', 'yplan', 'plan', 'flow'], stock:['vet'],
+  vet:     {create:['vet', 'birth', 'manip', 'milk', 'plan'], edit:['vet', 'manip', 'milk'], manage:['vet'], tabs:['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'daily', 'yplan', 'plan', 'flow', 'ewes', 'gain'], stock:['vet'],
             xl:['herd', 'births', 'events', 'milk', 'milkHeads', 'milkOut', 'vet']},
   feeder:  {create:['feed', 'plan'], edit:['feed'], manage:['feed'], tabs:['home', 'herd', 'pens', 'stock', 'feedsheet', 'feeding', 'manual', 'more'], stock:['feed'], xl:['feed', 'pens']},
   mechanic:{create:['fuel', 'plan'], edit:['fuel'], manage:['fuel'], tabs:['home', 'stock', 'more'], stock:['fuel', 'tech'], xl:['fuel', 'tech']},
@@ -1279,6 +1279,10 @@ function moreView(){
     canTab('stock') && !canTab('herd') && row('', 'Склад', 'Остатки, приход, расход', 'data-nav="stock"'),
     canTab('money') && row('money', 'Финансы', 'Доходы и расходы по месяцам'),
     canTab('flow') && row('flow', 'Движение поголовья', 'За год по месяцам и по породам: приплод, поступление, падёж, забой, продажа'),
+    canTab('ewes') && row('ewes', 'Матки и выбраковка', 'Окоты, плодовитость, сохранность приплода, удой; кого выбраковать'),
+    canTab('gain') && row('gain', 'Привесы молодняка', 'Среднесуточный привес по взвешиваниям, кто отстаёт'),
+    canTab('cost') && row('cost', 'Себестоимость', 'Корм на голову в сутки и на литр молока — по рационам и ценам'),
+    canTab('sales') && row('sales', 'Продажи животных', 'Покупатель, вес, сумма; итоги по месяцам'),
     canTab('stats') && row('stats', 'Сводка', 'Поголовье, приплод, молоко, деньги за год'),
     row('', 'Выгрузка в Excel', 'Данные по вашим разделам за выбранный период', 'data-act="excel"'),
     canTab('herd') && canXl('herd') && row('', 'Акт выбытия из стада', 'Форма СП-54: убой и падеж за период — сразу в Excel', 'data-act="akt"'),
@@ -1398,6 +1402,9 @@ function bindView(){
   on('[data-fin]', b => financeForm(S.finance.find(r => r.id===b.dataset.fin)));
   on('[data-m]', b => { const [y,m] = S.month.split('-').map(Number); S.month = iso(new Date(y, m-1+(+b.dataset.m), 1)).slice(0,7); render(); });
   on('[data-tab-go]', b => go(b.dataset.tabGo));
+  on('[data-anspk]', b => { S[b.dataset.anspk] = b.dataset.ansp; render(); });
+  on('[data-ewc]', b => { S.ewCull = b.dataset.ewc === '1'; render(); });
+  ['cost-m', 'sale-y'].forEach(id => { const el = document.querySelector('#' + id); if(el) el.onchange = () => { if(id === 'cost-m') S.costM = el.value; else S.saleY = +el.value; render(); }; });
   ['fl-y', 'fl-sp', 'fl-br'].forEach(id => { const el = document.querySelector('#' + id); if(el) el.onchange = () => { if(id === 'fl-y') S.flowY = +el.value; if(id === 'fl-sp'){ S.flowSp = el.value; S.flowBr = ''; } if(id === 'fl-br') S.flowBr = el.value; render(); }; });
   document.querySelectorAll('[data-flm]').forEach(b => b.onclick = () => { S.flowMode = b.dataset.flm; render(); });
   const bb = document.querySelector('#breedblk'); if(bb) bb.ontoggle = () => { S.breedOpen = bb.open; };
@@ -1436,7 +1443,7 @@ function bindView(){
   on('[data-act]', b => ({
     'add-animal':() => animalForm(), 'add-fin':() => financeForm(), 'add-ration':() => rationForm(),
     'add-item':() => itemForm({cat:S.stockCat}), 'add-routine':() => routineForm(null), 'seed-plan':seedPlan, 'plan-ics':planIcs, 'plan-xl':planXl, 'daily-xl':dailyXl, 'daily-share':dailyShare, 'add-scheme':() => schemeForm(null, S.vetKind), 'seed-scheme':seedScheme, 'veh-all-gsm':allToGsm, 'seed-items':seedItems, 'milkout':() => milkOutForm(),
-    'breeds-xl':breedsXl, 'flow-xl':flowXl, 'breed-rename':breedRename,
+    'breeds-xl':breedsXl, 'flow-xl':flowXl, 'ewes-xl':ewesXl, 'gain-xl':gainXl, 'sales-xl':salesXl, 'vet-journal':vetJournalSheet, 'breed-rename':breedRename,
     'list-xl':() => { const q = S.q.trim().toLowerCase(); const list = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, a.qr, groupName(a.species, groupOf(a)), penShort(a.pen), penLong(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).sort(penSort);
       const name = (q && !S.filter ? `Поиск «${S.q.trim()}»` : filterName(S.filter)).replace(/[\\/:*?"<>|]/g, ''); listXl(list, name); },
     'mate-list':() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => a.status==='active' && a.sex==='f' && !insemOf(a)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); eventForm({type:'mating', animalIds:ids}); }, 'feed-log':feedLogSheet, 'feeding-xl':feedingXl, 'ration-clear-old':clearOldRationNos, akt:aktSheet, 'q-birth':() => eventForm({type:'birth'}), 'q-vet':() => eventForm({type:'vac'}), 'q-feed':() => moveForm({cat:'feed', kind:'in'}), 'q-fuel':() => moveForm({cat:'fuel', kind:'out'}), 'add-fuel':() => itemForm({cat:'fuel'}), 'add-vehicle':() => itemForm({cat:'vehicle'}), milkquick:() => milkQuickForm(S.milkDate||today(), defaultSession()), import:importSheet, regroup:() => { const q = S.q.trim().toLowerCase(); const ids = S.animals.filter(filterFn(S.filter)).filter(a => !q || [a.tag, a.name, a.breed, a.cat, penShort(a.pen), penLabel(a.pen)].some(x => String(x||'').toLowerCase().includes(q))).map(a => a.id); regroupSheet(ids, filterName(S.filter)); }, excel:() => excelSheet(b.dataset.sec ? b.dataset.sec.split(',') : null), 'feed-pause':toggleFeedPause, backup, 'clear-demo':clearDemo,
@@ -1572,6 +1579,7 @@ function vetView(){
   if(loading('events', 'settings')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
   const tasks = vetTasks(), act = activeCourses(), sub = S.vetSub || 'today';
   if(canCreate('vet')) h += `<div class="actions"><button class="btn primary" data-vnew="ill">Лечение</button><button class="btn" data-vnew="vac">Вакцинация</button><button class="btn" data-vnew="treat">Дегельминтизация</button><button class="btn" data-vnew="vit">Витаминизация</button></div>`;
+  if(canXl('vet')) h += `<div class="actions"><button class="btn" data-act="vet-journal">📋 Журнал обработок в Excel (для ветслужбы)</button></div>`;
   h += `<div class="segb" role="group">${[['today', `Сегодня${tasks.length ? ' · ' + tasks.length : ''}`], ['courses', `Курсы${act.length ? ' · ' + act.length : ''}`], ['schemes', 'Схемы']].map(([k, l]) => `<button data-vsub="${k}" aria-pressed="${sub === k}">${l}</button>`).join('')}</div>`;
   if(sub === 'today'){
     if(!tasks.length) return h + `<div class="empty"><p>На сегодня процедур нет.${act.length ? ` Идёт курсов: ${act.length}.` : ''}</p><p class="muted">Назначьте лечение кнопкой выше — по схеме приложение само будет показывать, кого и чем колоть каждый день, а в день оценки спросит результат.</p></div>`;
@@ -2271,7 +2279,9 @@ function animalForm(a, pre){
       <div class="field" id="outWrap" ${v.status==='active'?'hidden':''}><label for="a-out">Дата выбытия</label><input id="a-out" type="date" name="outDate" value="${esc(v.outDate||today())}"></div></div>
     <div id="outMore" ${['dead','slaughter'].includes(v.status)?'':'hidden'}><div class="two">${fld('a-ofat','Упитанность (для акта)',`<select id="a-ofat" name="outFat">${opt('','—',v.outFat||'')}${FATNESS.map(x => opt(x,x,v.outFat)).join('')}</select>`)}${fld('a-ow','Живая масса, кг',`<input id="a-ow" name="outWeight" inputmode="decimal" value="${esc(v.outWeight ?? '')}" autocomplete="off">`)}</div>
       ${fld('a-orsn','Диагноз / причина',`<input id="a-orsn" name="outReason" value="${esc(v.outReason||'')}" autocomplete="off" placeholder="напр. безоар">`)}</div>
-    <div class="field" id="priceWrap" hidden><label for="a-price">Сумма продажи, ₽ (попадёт в финансы)</label><input id="a-price" name="price" type="number" min="0" step="1" inputmode="numeric"></div>
+    <div id="saleWrap" ${v.status==='sold'?'':'hidden'}><div class="two">${fld('a-sto','Покупатель',`<input id="a-sto" name="soldTo" value="${esc(v.soldTo||'')}" autocomplete="off" list="buyers">`)}${fld('a-sw','Живой вес при продаже, кг',`<input id="a-sw" name="soldWeight" inputmode="decimal" value="${esc(v.soldWeight ?? '')}" autocomplete="off">`)}</div>
+      <datalist id="buyers">${[...new Set(S.animals.map(x => x.soldTo).filter(Boolean))].map(b => `<option value="${esc(b)}">`).join('')}</datalist>
+      <div class="field"><label for="a-price">Сумма продажи, ₽${a && a.status==='sold' ? '' : ' (попадёт в финансы)'}</label><input id="a-price" name="price" type="number" min="0" step="1" inputmode="numeric" value="${esc(v.salePrice ?? '')}"></div></div>
     ${!a ? fld('a-w','Вес сейчас, кг',`<input id="a-w" name="weight" inputmode="decimal" autocomplete="off">`) : ''}
     <p class="err" id="aerr" hidden></p>
     <div class="actions"><button class="btn primary" type="submit">${a?'Сохранить':'Добавить в стадо'}</button></div>
@@ -2279,7 +2289,7 @@ function animalForm(a, pre){
   </form>`;
   openSheet(a ? 'Изменить ' + animalLabel(a) : 'Новое животное', body, s => {
     const f = s.querySelector('#af'), st = f.querySelector('#a-status');
-    const sync = () => { s.querySelector('#outWrap').hidden = st.value==='active'; s.querySelector('#outMore').hidden = !['dead','slaughter'].includes(st.value); s.querySelector('#priceWrap').hidden = !(st.value==='sold' && (!a || a.status!=='sold')); };
+    const sync = () => { s.querySelector('#outWrap').hidden = st.value==='active'; s.querySelector('#outMore').hidden = !['dead','slaughter'].includes(st.value); s.querySelector('#saleWrap').hidden = st.value!=='sold'; };
     const gsel = f.querySelector('#a-group');
     const fillGroups = () => {
       const sp = f.querySelector('input[name=species]:checked').value, cur = gsel.value || (v.group==='none' ? '__none' : (v.group || ''));
@@ -2303,10 +2313,11 @@ function animalForm(a, pre){
       if(!data.group) delete data.group;
       else if(data.group !== a?.group) data.groupSince = today();
       if(data.status==='active') delete data.outDate;
+      if(data.status==='sold'){ if(price) data.salePrice = price; else delete data.salePrice; if(data.soldWeight) data.soldWeight = round(dec(data.soldWeight), 1); for(const k of ['soldTo','soldWeight']) if(data[k] === '' || data[k] == null) delete data[k]; } else { delete data.salePrice; delete data.soldTo; delete data.soldWeight; }
       if(!['dead','slaughter'].includes(data.status)){ delete data.outFat; delete data.outWeight; delete data.outReason; } else { if(data.outWeight) data.outWeight = round(dec(data.outWeight), 1); for(const k of ['outFat','outWeight','outReason']) if(data[k] === '' || data[k] == null) delete data[k]; }
       let id = a?.id;
       if(a) store.set('animals', a.id, data); else id = store.add('animals', data);
-      if(price) store.add('finance', {date:d.outDate||today(), kind:'income', category:'Продажа животных', amount:price, note:`Бирка №${d.tag}`});
+      if(price && data.status==='sold' && (!a || a.status!=='sold')) store.add('finance', {date:d.outDate||today(), kind:'income', category:'Продажа животных', amount:price, note:`Бирка №${d.tag}${data.soldTo ? ' · ' + data.soldTo : ''}${data.soldWeight ? ' · ' + num(data.soldWeight) + ' кг' : ''}`});
       if(weight > 0) store.add('events', {animalIds:[id], type:'weight', date:today(), weight:round(weight,1)});
       toast(a ? 'Сохранено' : 'Добавлено в стадо');
       setTimeout(() => animalCard(id), 120);
@@ -2602,6 +2613,188 @@ function flowXl(){
   saveFile(`Движение поголовья ${y}.xlsx`, XL.build(sheets)).then(ok => ok && toast('Движение поголовья сохранено в «Загрузки»'));
 }
 
+
+/* ===== Аналитика: матки и выбраковка, привесы, себестоимость, продажи, журнал ветобработок ===== */
+const anTable = (head, rows, cls = '') => `<div class="flowt ${cls}"><table><thead><tr>${head.map((h, i) => `<th style="${i ? '' : 'text-align:left'}">${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+const anCss = `<style>.flowt{overflow-x:auto;border:1px solid var(--line);border-radius:14px}.flowt table{border-collapse:collapse;width:100%;font-size:14px}.flowt th,.flowt td{padding:9px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}.flowt td:first-child{text-align:left}.flowt th{font-size:12px;color:var(--muted);font-weight:600}.flowt tr.tot td{font-weight:700;background:rgba(255,255,255,.04)}.flowt tr[data-open]{cursor:pointer}.flowt .warn{color:var(--warn,#F2B13F)}.flowt .bad{color:#ff8a80}</style>`;
+const spSeg = key => `<div class="segb" role="group">${[['', 'Все'], ['sheep', 'Овцы'], ['goat', 'Козы']].map(([k, l]) => `<button data-anspk="${key}" data-ansp="${k}" aria-pressed="${(S[key] || '') === k}">${l}</button>`).join('')}</div>`;
+
+// --- Матки: продуктивность и кандидаты на выбраковку ---
+const OLD_AGE = {sheep:6, goat:7}; // лет
+function eweStats(a){
+  const births = S.events.filter(e => e.type === 'birth' && (e.animalIds || []).includes(a.id)).sort((x, y) => y.date.localeCompare(x.date));
+  const kids = S.animals.filter(k => k.motherId === a.id), kidsDead = kids.filter(k => k.status === 'dead').length;
+  const bornTotal = births.reduce((t, e) => t + (+e.count || 0), 0) || kids.length;
+  const kidLast = kids.map(k => k.birth || '').sort().pop() || '', last = [births[0]?.date || '', kidLast].sort().pop() || '', sinceLast = last ? daysBetween(last, today()) : null;
+  const m30 = animalMilk(a.id, 30), lact = last ? animalMilk(a.id, Math.max(1, daysBetween(last, today()) + 1)) : null;
+  const ageY = a.birth ? daysBetween(a.birth, today()) / 365.25 : null;
+  return {a, births:births.length, bornTotal, kids:kids.length, kidsDead, safe: kids.length ? (kids.length - kidsDead) / kids.length : null, last, sinceLast, m30:m30?.avg || null, lact:lact?.avg || null, ageY, insem:!!insemOf(a), grp:groupOf(a)};
+}
+function cullReasons(x, milkAvg){
+  const r = [], ageM = x.ageY != null ? x.ageY * 12 : null;
+  if(x.ageY != null && x.ageY >= OLD_AGE[x.a.species]) r.push(`возраст ${Math.floor(x.ageY)} лет`);
+  if(x.last && !x.insem && x.grp !== 'preg' && ageM != null && ageM >= 18 && x.sinceLast > 420) r.push(`без окота ${Math.round(x.sinceLast / 30)} мес`);
+  if(x.grp === 'milk' && x.m30 != null && milkAvg[x.a.species] && x.m30 < milkAvg[x.a.species] * 0.5) r.push(`удой ${num(round(x.m30, 2))} л — ниже половины среднего`);
+  if(x.kids >= 3 && x.safe != null && x.safe < 0.5) r.push(`сохранность ${Math.round(x.safe * 100)}%`);
+  return r;
+}
+function ewesData(sp){
+  const list = S.animals.filter(a => a.status === 'active' && a.sex === 'f' && (!sp || a.species === sp) && (adult(a) || S.events.some(e => e.type === 'birth' && (e.animalIds || []).includes(a.id)))).map(eweStats);
+  const milkAvg = {}; ['sheep', 'goat'].forEach(s => { const v = list.filter(x => x.a.species === s && x.grp === 'milk' && x.m30 != null).map(x => x.m30); milkAvg[s] = v.length ? v.reduce((t, y) => t + y, 0) / v.length : 0; });
+  list.forEach(x => x.cull = cullReasons(x, milkAvg));
+  return {list, milkAvg};
+}
+function ewesView(){
+  let h = anCss + `<button class="back" data-tab-go="more">‹ Ещё</button><h2 class="page">Матки: продуктивность и выбраковка</h2>`;
+  if(loading('animals', 'events', 'milk')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
+  const sp = S.ewSp || '', only = S.ewCull !== false, {list} = ewesData(sp);
+  const cull = list.filter(x => x.cull.length), births = list.reduce((t, x) => t + x.births, 0), born = list.reduce((t, x) => t + x.bornTotal, 0);
+  const kids = list.reduce((t, x) => t + x.kids, 0), dead = list.reduce((t, x) => t + x.kidsDead, 0), noB = list.filter(x => !x.last).length;
+  h += spSeg('ewSp') + `<div class="stats"><div class="stat"><div class="v">${list.length}</div><div class="l">маток</div></div><div class="stat"><div class="v">${births ? num(round(born / births, 2)) : '—'}</div><div class="l">детёнышей на окот (плодовитость)</div></div>
+    <div class="stat"><div class="v">${kids ? Math.round((kids - dead) / kids * 100) + '%' : '—'}</div><div class="l">сохранность молодняка</div></div><div class="stat"><div class="v">${cull.length}</div><div class="l">кандидатов на выбраковку</div></div></div>${noB ? `<p class="muted" style="margin:0">Нет данных об окотах у ${noB} из ${list.length}: окот не записан и ягнята/козлята не привязаны к матери. Такие матки не считаются яловыми.</p>` : ''}
+    <div class="segb" role="group"><button data-ewc="1" aria-pressed="${only}">Кандидаты на выбраковку</button><button data-ewc="0" aria-pressed="${!only}">Все матки</button></div>`;
+  const rows = (only ? cull : list).slice().sort((p, q) => q.cull.length - p.cull.length || tagSort(p.a, q.a));
+  h += rows.length ? anTable(['№', 'Возраст', 'Окотов', 'Детёнышей', 'Сохр.', 'Посл. окот', 'Удой 30 дн., л/сут', only ? 'Почему' : 'Внимание'], rows.map(x => `<tr data-open="${x.a.id}"><td><b>${esc(x.a.tag)}</b> <span class="muted">${x.a.species === 'goat' ? 'коза' : 'овца'}</span></td><td>${x.ageY != null ? num(round(x.ageY, 1)) : '—'}</td><td>${x.births}</td><td>${x.bornTotal || ''}</td>
+      <td class="${x.safe != null && x.safe < 0.5 ? 'bad' : ''}">${x.safe != null ? Math.round(x.safe * 100) + '%' : ''}</td><td>${x.last ? fmtD(x.last) : ''}</td><td>${x.m30 != null ? num(round(x.m30, 2)) : ''}</td><td class="warn" style="text-align:left;white-space:normal;min-width:180px">${esc(x.cull.join(', '))}</td></tr>`))
+    : `<div class="empty"><p>${only ? 'Кандидатов на выбраковку нет.' : 'Маток нет.'}</p></div>`;
+  h += `<p class="muted" style="margin:0">Кандидат: возраст от ${OLD_AGE.sheep} лет (овцы) / ${OLD_AGE.goat} лет (козы); старше 1,5 лет, последний окот больше 14 месяцев назад, не на осеменении и не суягная/сукозная; дойная с удоем ниже половины среднего по виду; сохранность приплода ниже 50% (от 3 детёнышей). Удой — по надоям «по каждой голове».</p>
+    ${canXl('herd') ? `<div class="actions"><button class="btn" data-act="ewes-xl">Скачать в Excel</button></div>` : ''}`;
+  return h;
+}
+function ewesXl(){
+  const {list} = ewesData(S.ewSp || '');
+  const sh = {name:'Матки', title:`Матки: продуктивность и выбраковка на ${fmtD(today())}`, cols:[{h:'Бирка', w:10}, {h:'Вид', w:7}, {h:'Порода', w:14}, {h:'Загон', w:22}, {h:'Группа', w:18}, {h:'Возраст, лет', w:9, t:'n'}, {h:'Окотов', w:8, t:'i'}, {h:'Детёнышей', w:9, t:'i'}, {h:'Пало детёнышей', w:9, t:'i'}, {h:'Сохранность, %', w:10, t:'i'}, {h:'Последний окот', w:12, t:'d'}, {h:'Удой 30 дн., л/сут', w:10, t:'n'}, {h:'Удой за лактацию, л/сут', w:10, t:'n'}, {h:'На осеменении', w:9}, {h:'Кандидат на выбраковку', w:40}],
+    rows:list.slice().sort((p, q) => q.cull.length - p.cull.length || tagSort(p.a, q.a)).map(x => [String(x.a.tag), SPECIES[x.a.species], x.a.breed || '', penShort(x.a.pen), groupName(x.a.species, x.grp), x.ageY != null ? round(x.ageY, 1) : '', x.births, x.bornTotal, x.kidsDead, x.safe != null ? Math.round(x.safe * 100) : '', x.last, x.m30 != null ? round(x.m30, 2) : '', x.lact != null ? round(x.lact, 2) : '', x.insem ? 'да' : '', x.cull.join(', ')])};
+  saveFile(`Матки и выбраковка ${today()}.xlsx`, XL.build([sh])).then(ok => ok && toast('Сохранено в «Загрузки»'));
+}
+
+// --- Привесы молодняка ---
+function gainData(sp){
+  const res = [];
+  S.animals.filter(a => a.status === 'active' && (!sp || a.species === sp) && a.birth && daysBetween(a.birth, today()) <= 400).forEach(a => {
+    const ws = S.events.filter(e => e.type === 'weight' && e.weight && (e.animalIds || []).includes(a.id)).map(e => ({d:e.date, w:+e.weight})).sort((x, y) => x.d.localeCompare(y.d));
+    if(!ws.length) return;
+    const first = ws[0], last = ws[ws.length - 1], days = daysBetween(first.d, last.d);
+    const adg = ws.length > 1 && days > 0 ? (last.w - first.w) / days * 1000 : null;
+    res.push({a, n:ws.length, first, last, days, adg, ageD:daysBetween(a.birth, today())});
+  });
+  const med = {}; ['sheep', 'goat'].forEach(s => { const v = res.filter(x => x.a.species === s && x.adg != null).map(x => x.adg).sort((p, q) => p - q); med[s] = v.length ? v[Math.floor(v.length / 2)] : 0; });
+  res.forEach(x => x.lag = x.adg != null && med[x.a.species] > 0 && x.adg < med[x.a.species] * 0.7);
+  return {res, med};
+}
+function gainView(){
+  let h = anCss + `<button class="back" data-tab-go="more">‹ Ещё</button><h2 class="page">Привесы молодняка</h2>`;
+  if(loading('animals', 'events')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
+  const sp = S.gnSp || '', {res, med} = gainData(sp), withG = res.filter(x => x.adg != null), lag = withG.filter(x => x.lag);
+  h += spSeg('gnSp') + `<div class="stats"><div class="stat"><div class="v">${withG.length}</div><div class="l">с двумя и более взвешиваниями</div></div>${['sheep', 'goat'].filter(s => (!sp || s === sp) && med[s]).map(s => `<div class="stat"><div class="v">${Math.round(med[s])} г</div><div class="l">средний суточный привес: ${s === 'goat' ? 'козлята' : 'ягнята'} (медиана)</div></div>`).join('')}<div class="stat"><div class="v">${lag.length}</div><div class="l">отстают (ниже 70% медианы)</div></div></div>`;
+  const rows = withG.slice().sort((p, q) => (q.lag - p.lag) || p.adg - q.adg);
+  h += rows.length ? anTable(['№', 'Возраст, дн', 'Взвеш.', 'Первый вес', 'Последний', 'Дней', 'Привес, г/сут'], rows.map(x => `<tr data-open="${x.a.id}"><td><b>${esc(x.a.tag)}</b> <span class="muted">${x.a.species === 'goat' ? 'коз.' : 'ягн.'} ${x.a.sex === 'f' ? '♀' : '♂'}</span></td><td>${x.ageD}</td><td>${x.n}</td><td>${num(x.first.w)} кг · ${fmtShort(x.first.d)}</td><td>${num(x.last.w)} кг · ${fmtShort(x.last.d)}</td><td>${x.days}</td><td class="${x.lag ? 'bad' : ''}"><b>${Math.round(x.adg)}</b>${x.lag ? ' ↓' : ''}</td></tr>`))
+    : `<div class="empty"><p>Пока не у кого считать: нужно хотя бы два взвешивания (вес при рождении тоже считается). Взвешивание — в карточке животного «+ Добавить событие» → «Взвешивание».</p></div>`;
+  const noW = S.animals.filter(a => a.status === 'active' && (!sp || a.species === sp) && a.birth && daysBetween(a.birth, today()) <= 400 && !res.some(x => x.a.id === a.id)).length;
+  h += `<p class="muted" style="margin:0">Молодняк до 13 месяцев. Привес = (последний вес − первый вес) ÷ дней между взвешиваниями.${noW ? ` Без взвешиваний: ${heads(noW)}.` : ''}</p>${canXl('herd') && res.length ? `<div class="actions"><button class="btn" data-act="gain-xl">Скачать в Excel</button></div>` : ''}`;
+  return h;
+}
+function gainXl(){
+  const {res} = gainData(S.gnSp || '');
+  const sh = {name:'Привесы', title:`Привесы молодняка на ${fmtD(today())}`, cols:[{h:'Бирка', w:10}, {h:'Вид', w:7}, {h:'Пол', w:6}, {h:'Порода', w:14}, {h:'Мать', w:10}, {h:'Загон', w:22}, {h:'Дата рождения', w:12, t:'d'}, {h:'Возраст, дн', w:9, t:'i'}, {h:'Взвешиваний', w:9, t:'i'}, {h:'Первый вес, кг', w:9, t:'n'}, {h:'Дата', w:12, t:'d'}, {h:'Последний вес, кг', w:9, t:'n'}, {h:'Дата', w:12, t:'d'}, {h:'Привес, г/сут', w:10, t:'i'}, {h:'Отстаёт', w:8}],
+    rows:res.slice().sort((p, q) => (q.lag - p.lag) || (p.adg ?? 1e9) - (q.adg ?? 1e9)).map(x => [String(x.a.tag), SPECIES[x.a.species], x.a.sex === 'f' ? '♀' : '♂', x.a.breed || '', tagOf(x.a.motherId), penShort(x.a.pen), x.a.birth, x.ageD, x.n, x.first.w, x.first.d, x.last.w, x.last.d, x.adg != null ? Math.round(x.adg) : '', x.lag ? 'да' : ''])};
+  saveFile(`Привесы молодняка ${today()}.xlsx`, XL.build([sh])).then(ok => ok && toast('Сохранено в «Загрузки»'));
+}
+
+// --- Себестоимость: корм на голову, литр молока ---
+function feedPrice(id){
+  const it = itemById(id), ins = S.moves.filter(m => m.item === id && m.kind === 'in' && +m.price > 0 && +m.qty > 0);
+  const q = ins.reduce((t, m) => t + +m.qty, 0), sum = ins.reduce((t, m) => t + +m.price, 0);
+  return q > 0 ? sum / q : (+it?.price || 0);
+}
+const rationCost = r => (r?.items || []).reduce((t, x) => t + (+x.qty || 0) * feedPrice(x.item), 0);
+function milkLiters(from, to){ return S.milk.filter(m => m.date >= from && m.date <= to).reduce((t, m) => t + Object.values(m.yields || {}).reduce((p, v) => p + (+v || 0), 0) + (+m.extra || 0), 0); }
+function costView(){
+  let h = anCss + `<button class="back" data-tab-go="more">‹ Ещё</button><h2 class="page">Себестоимость</h2>`;
+  if(loading('animals', 'pens', 'rations', 'items', 'moves', 'milk', 'finance')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
+  const feeds = itemsOf('feed'), noPrice = feeds.filter(f => !feedPrice(f.id));
+  // по рационам
+  const rs = S.rations.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru', {numeric:true}));
+  const pens = PENS.map(p => ({p, r:rationById(S.pens.find(x => x.id === p.id)?.ration), n:inPen(p.id).length})).filter(x => x.r && x.n);
+  const dayCost = pens.reduce((t, x) => t + rationCost(x.r) * (x.r.mode === 'pen' ? 1 : x.n), 0), headsFed = pens.reduce((t, x) => t + x.n, 0);
+  // дойное стадо
+  const milkHeads = S.animals.filter(a => a.status === 'active' && groupOf(a) === 'milk');
+  const milkFeed = milkHeads.reduce((t, a) => { const r = rationById(S.pens.find(x => x.id === a.pen)?.ration); return t + (r && r.mode !== 'pen' ? rationCost(r) : 0); }, 0);
+  const t = today(), from30 = addDays(t, -29), l30 = milkLiters(from30, t) / 30;
+  // за месяц: расход кормов × цена и все расходы из финансов
+  const ym = S.costM || t.slice(0, 7), mFrom = ym + '-01', mTo = addDays((+ym.slice(5) === 12 ? `${+ym.slice(0, 4) + 1}-01` : `${ym.slice(0, 4)}-${pad(+ym.slice(5) + 1)}`) + '-01', -1);
+  const feedOut = S.moves.filter(m => m.kind === 'out' && m.date >= mFrom && m.date <= mTo && itemById(m.item)?.cat === 'feed').reduce((s2, m) => s2 + +m.qty * feedPrice(m.item), 0);
+  const exp = S.finance.filter(f => f.kind === 'expense' && f.date >= mFrom && f.date <= mTo).reduce((s2, f) => s2 + (+f.amount || 0), 0);
+  const litM = milkLiters(mFrom, mTo), months = []; for(let i = 0; i < 12; i++){ const d = new Date(+t.slice(0, 4), +t.slice(5, 7) - 1 - i, 1); months.push(`${d.getFullYear()}-${pad(d.getMonth() + 1)}`); }
+  h += `<p class="muted" style="margin:0">Цена корма — средняя по приходам со суммой (Склад → приход с ценой). Если приходов с ценой нет — цена из карточки корма.</p>
+    ${noPrice.length ? `<div class="banner">Нет цены у ${noPrice.length} ${plural(noPrice.length, 'корма', 'кормов', 'кормов')}: ${esc(noPrice.map(f => f.name).join(', '))}. Укажите сумму при приходе или «Цена за единицу» в карточке корма — иначе себестоимость занижена.</div>` : ''}
+    <div class="stats"><div class="stat"><div class="v">${money(dayCost)}</div><div class="l">корм в сутки по рационам · ${heads(headsFed)}</div></div><div class="stat"><div class="v">${headsFed ? num(round(dayCost / headsFed, 1)) + ' ₽' : '—'}</div><div class="l">корм на голову в сутки (в среднем)</div></div>
+      <div class="stat"><div class="v">${l30 > 0 && milkFeed > 0 ? num(round(milkFeed / l30, 1)) + ' ₽' : '—'}</div><div class="l">корм на 1 литр молока (дойное стадо: ${heads(milkHeads.length)}, надой ${num(round(l30, 1))} л/сут за 30 дн.)</div></div></div>`;
+  h += `<div class="panel"><div class="eyebrow">Рационы: стоимость на голову в сутки</div>${rs.length ? anTable(['Рацион', '₽/гол/сут', 'Загонов', 'Голов', '₽ в сутки'], rs.map(r => { const ps = pens.filter(x => x.r.id === r.id), n = ps.reduce((s2, x) => s2 + x.n, 0), c = rationCost(r);
+      return `<tr><td>${esc(r.name)}${r.mode === 'pen' ? ' <span class="muted">(на загон)</span>' : ''}</td><td><b>${num(round(c, 2))}</b></td><td>${ps.length}</td><td>${n}</td><td>${money(r.mode === 'pen' ? c * ps.length : c * n)}</td></tr>`; })) : '<p class="muted" style="margin:0">Рационов нет — «Ещё → Кормление».</p>'}</div>`;
+  h += `<div class="panel"><div class="kv"><span class="eyebrow">За месяц</span><select id="cost-m">${months.map(m => opt(m, `${MONTHS_FL[+m.slice(5) - 1]} ${m.slice(0, 4)}`, ym)).join('')}</select></div>
+    <div class="kv"><span>Списано кормов (по складу)</span><strong>${money(feedOut)}</strong></div>
+    <div class="kv"><span>Все расходы (Финансы)</span><strong>${money(exp)}</strong></div>
+    <div class="kv"><span>Надоено молока</span><strong>${num(round(litM, 1))} л</strong></div>
+    <div class="kv total"><span>Корм на 1 литр молока (весь корм ÷ всё молоко)</span><strong>${litM > 0 ? num(round(feedOut / litM, 1)) + ' ₽' : '—'}</strong></div>
+    <div class="kv total"><span>Все расходы на 1 литр молока</span><strong>${litM > 0 ? num(round(exp / litM, 1)) + ' ₽' : '—'}</strong></div></div>
+    <div class="panel"><div class="eyebrow">Цены кормов</div>${feeds.length ? anTable(['Корм', 'Цена за ед.', 'Откуда'], feeds.map(f => { const ins = S.moves.some(m => m.item === f.id && m.kind === 'in' && +m.price > 0); const p = feedPrice(f.id);
+      return `<tr><td>${esc(f.name)}</td><td class="${p ? '' : 'bad'}">${p ? num(round(p, 2)) + ' ₽/' + esc(f.unit) : 'нет цены'}</td><td>${ins ? 'по приходам' : p ? 'из карточки' : ''}</td></tr>`; })) : ''}</div>`;
+  return h;
+}
+
+// --- Продажи животных ---
+function salesView(){
+  let h = anCss + `<button class="back" data-tab-go="more">‹ Ещё</button><h2 class="page">Продажи животных</h2>`;
+  if(loading('animals')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
+  const y = S.saleY || +today().slice(0, 4), years = []; for(let k = +today().slice(0, 4); k >= 2024; k--) years.push(k);
+  const list = S.animals.filter(a => a.status === 'sold' && (a.outDate || '').startsWith(String(y))).sort((a, b) => (b.outDate || '').localeCompare(a.outDate || ''));
+  const sum = list.reduce((t, a) => t + (+a.salePrice || 0), 0), kg = list.reduce((t, a) => t + (+a.soldWeight || 0), 0);
+  h += fld('sale-y', 'Год', `<select id="sale-y">${years.map(k => opt(String(k), String(k), String(y))).join('')}</select>`) + `<div class="stats"><div class="stat"><div class="v">${list.length}</div><div class="l">продано голов</div></div><div class="stat"><div class="v">${money(sum)}</div><div class="l">выручка</div></div><div class="stat"><div class="v">${kg ? num(round(kg)) + ' кг' : '—'}</div><div class="l">живой вес${kg && sum ? ` · ${num(round(sum / kg))} ₽/кг` : ''}</div></div></div>`;
+  const byM = {}; list.forEach(a => { const m = a.outDate.slice(0, 7); (byM[m] ||= {n:0, s:0, kg:0}); byM[m].n++; byM[m].s += +a.salePrice || 0; byM[m].kg += +a.soldWeight || 0; });
+  if(list.length) h += `<div class="panel"><div class="eyebrow">По месяцам</div>${anTable(['Месяц', 'Голов', 'Кг', 'Сумма'], [...Object.entries(byM).sort().map(([m, v]) => `<tr><td>${MONTHS_FL[+m.slice(5) - 1]}</td><td>${v.n}</td><td>${v.kg ? num(round(v.kg)) : ''}</td><td>${money(v.s)}</td></tr>`), `<tr class="tot"><td>Итого</td><td>${list.length}</td><td>${kg ? num(round(kg)) : ''}</td><td>${money(sum)}</td></tr>`])}</div>`;
+  h += list.length ? anTable(['Дата', '№', 'Вид', 'Вес, кг', 'Сумма', 'Покупатель'], list.map(a => `<tr data-open="${a.id}"><td>${fmtD(a.outDate)}</td><td><b>${esc(a.tag)}</b></td><td>${a.species === 'goat' ? 'коза' : 'овца'} ${a.sex === 'f' ? '♀' : '♂'}</td><td>${a.soldWeight ? num(a.soldWeight) : ''}</td><td>${a.salePrice ? money(a.salePrice) : ''}</td><td style="text-align:left">${esc(a.soldTo || '')}</td></tr>`))
+    : `<div class="empty"><p>Продаж за ${y} год нет. Продажа отмечается в карточке животного: «Изменить» → Статус «Продан(а)» → дата, покупатель, вес, сумма.</p></div>`;
+  if(list.length && canXl('herd')) h += `<div class="actions"><button class="btn" data-act="sales-xl">Скачать в Excel</button></div>`;
+  return h;
+}
+function salesXl(){
+  const y = S.saleY || +today().slice(0, 4), list = S.animals.filter(a => a.status === 'sold' && (a.outDate || '').startsWith(String(y))).sort((a, b) => (a.outDate || '').localeCompare(b.outDate || ''));
+  const sh = {name:'Продажи', title:`Продажи животных за ${y} год`, cols:[{h:'Дата', w:12, t:'d'}, {h:'Бирка', w:10}, {h:'Вид', w:7}, {h:'Пол', w:6}, {h:'Порода', w:14}, {h:'Возраст', w:12}, {h:'Живой вес, кг', w:10, t:'n'}, {h:'Сумма, ₽', w:12, t:'n'}, {h:'₽/кг', w:8, t:'n'}, {h:'Покупатель', w:26}],
+    rows:[...list.map(a => [a.outDate, String(a.tag), SPECIES[a.species], a.sex === 'f' ? '♀' : '♂', a.breed || '', a.birth ? age(a.birth) : '', +a.soldWeight || '', +a.salePrice || '', a.soldWeight && a.salePrice ? round(a.salePrice / a.soldWeight, 0) : '', a.soldTo || '']),
+      ['Итого', list.length + ' гол.', '', '', '', '', round(list.reduce((t, a) => t + (+a.soldWeight || 0), 0), 1), list.reduce((t, a) => t + (+a.salePrice || 0), 0), '', '']]};
+  saveFile(`Продажи ${y}.xlsx`, XL.build([sh])).then(ok => ok && toast('Сохранено в «Загрузки»'));
+}
+
+// --- Журнал ветеринарных обработок (Excel за период) ---
+function vetJournalSheet(){
+  const t = today(), [y, m] = t.split('-').map(Number), pm = m === 1 ? [y - 1, 12] : [y, m - 1];
+  openSheet('Журнал ветобработок', `<p class="muted" style="margin:0">Таблица для ветслужбы: дата, вид обработки, номера животных, препарат, серия и срок годности, доза, способ, результат, кто вносил.</p>
+    <div class="two">${fld('vj-from', 'С', `<input id="vj-from" type="date" value="${pm[0]}-${pad(pm[1])}-01">`)}${fld('vj-to', 'По', `<input id="vj-to" type="date" value="${addDays(`${y}-${pad(m)}-01`, -1)}">`)}</div>
+    <div class="actions"><button class="btn primary" id="vj-go">Скачать журнал в Excel</button></div>`, s => {
+    s.querySelector('#vj-go').onclick = () => vetJournalXl(s.querySelector('#vj-from').value, s.querySelector('#vj-to').value);
+  }, 'vetjr');
+}
+function vetJournalXl(from, to){
+  const T = {ill:'Лечение', vac:'Вакцинация', treat:'Дегельминтизация', vit:'Витаминизация', manip:'Манипуляция', shear:'Стрижка'};
+  const evs = S.events.filter(e => (T[e.type] || e.type === 'dose') && e.date >= from && e.date <= to).sort((a, b) => a.date.localeCompare(b.date) || (a.created || 0) - (b.created || 0));
+  const parentOf = e => e.type === 'dose' ? S.events.find(x => x.id === e.course) : null;
+  const drugOf = e => {
+    if(e.type === 'manip') return e.drugs || [];
+    if(e.type === 'dose'){ const sc = parentOf(e)?.scheme; return (e.steps || []).map(str => (sc?.steps || []).find(st => stepShort(st) === str) || {name:str}); }
+    if(e.scheme?.steps){ if(S.events.some(x => x.type === 'dose' && x.course === e.id && +x.day === 1)) return []; return stepsOnDay(e.scheme, 1); }
+    return e.drug ? [{name:e.drug, dose:e.dose, route:e.route, item:e.item}] : [];
+  };
+  const rows = [];
+  evs.forEach(e => { const par = parentOf(e), tags = (e.animalIds || []).map(tagOf).filter(Boolean), ds = drugOf(e), by = whoName(e.byEmail);
+    const kind = e.type === 'dose' ? `${T[par?.type] || 'Курс'} · ${e.day || ''}-й день` : e.type === 'manip' ? (MANIP[e.manip] || 'Манипуляция') : T[e.type] + (e.scheme ? ' · назначено' : '');
+    const sch = (e.type === 'dose' ? par?.scheme?.name : e.scheme?.name) || '';
+    (ds.length ? ds : [{}]).forEach((d, i) => { const nm = d.name || itemById(d.item)?.name || '', it = d.item ? itemById(d.item) : S.items.find(x => x.cat === 'vet' && nm && norm(nm).startsWith(norm(x.name)));
+      rows.push([e.date, i ? '' : kind, i ? '' : sch, i ? '' : tags.length, i ? '' : tags.join(', '), nm, it?.series || '', it?.expiry || '', d.dose || '', d.route || '', i ? '' : (e.note || ''), i ? '' : by]); }); });
+  const sh = {name:'Журнал обработок', title:`Журнал ветеринарных обработок с ${fmtD(from)} по ${fmtD(to)}`, cols:[{h:'Дата', w:12, t:'d'}, {h:'Обработка', w:22}, {h:'Схема', w:18}, {h:'Голов', w:7, t:'i'}, {h:'Номера животных', w:40}, {h:'Препарат', w:24}, {h:'Серия', w:12}, {h:'Годен до', w:12, t:'d'}, {h:'Доза', w:10}, {h:'Способ', w:10}, {h:'Примечание', w:26}, {h:'Внёс', w:14}], rows};
+  saveFile(`Журнал ветобработок ${from}_${to}.xlsx`, XL.build([sh])).then(ok => ok && toast(`Журнал: ${evs.length} ${plural(evs.length, 'запись', 'записи', 'записей')} — сохранено`));
+}
+
 /* ===== Инструкция по программе (Ещё → Инструкция) ===== */
 const MANUAL = [
  ['start', 'Начало работы: вход, установка, без интернета', `
@@ -2702,6 +2895,12 @@ const MANUAL = [
   <li><b>Движение поголовья</b> («Ещё»): год, вид, «По месяцам» (можно выбрать породу) или «По породам» — на начало, приплод, поступило, падёж, забой, продано, на конец. «Скачать в Excel» — листы: всего, овцы, козы, по породам за год, породы по месяцам. Для купленных животных укажите в карточке «Поступил(а) в хозяйство».</li>
   <li><b>Сводка</b> — поголовье, приплод, молоко, деньги за год. <b>Финансы</b> — доходы и расходы по месяцам («Добавить запись»).</li></ul>
   <p>Файлы сохраняются в «Загрузки» телефона или компьютера.</p>`],
+ ['analytics', 'Матки, привесы, себестоимость, продажи', `
+  <ul><li><b>Матки и выбраковка</b> («Ещё»): по каждой взрослой самке — возраст, окотов, детёнышей, сохранность приплода, последний окот, удой за 30 дней. Вверху — плодовитость (детёнышей на окот) и сохранность молодняка по стаду. Кнопка «Кандидаты на выбраковку» показывает, кого стоит проверить и почему: возраст (овцы от 6 лет, козы от 7), больше 14 месяцев без окота и не на осеменении, удой ниже половины среднего, сохранность приплода ниже 50%. Нажмите строку — откроется карточка. «Скачать в Excel» — весь список.</li>
+  <li><b>Привесы молодняка</b> («Ещё»): для молодняка до 13 месяцев с двумя и более взвешиваниями — первый и последний вес, среднесуточный привес в граммах. Отстающие (ниже 70% от среднего по виду) — сверху, отмечены ↓. Вес при рождении, внесённый при окоте, тоже считается. Взвешивание: карточка животного → «+ Добавить событие» → «Взвешивание».</li>
+  <li><b>Себестоимость</b> («Ещё»): стоимость каждого рациона на голову в сутки, корм в сутки по всему стаду, корм на 1 литр молока (дойное стадо ÷ надой за 30 дней), а за выбранный месяц — списанный корм, все расходы из «Финансов» и надой → рубли на литр. Цена корма берётся средняя по приходам с суммой; если приходов с ценой нет — из карточки корма (Склад → корм → «Изменить» → «Цена за единицу»). Корма без цены выделены.</li>
+  <li><b>Продажи животных</b> («Ещё»): при продаже в карточке животного «Изменить» → Статус «Продан(а)» → дата, покупатель, живой вес, сумма. Сумма один раз попадёт в «Финансы» как доход. В разделе — итоги за год, по месяцам (голов, кг, сумма, ₽/кг) и список, «Скачать в Excel».</li>
+  <li><b>Журнал ветобработок</b> («Стадо → Ветеринария» → «Журнал обработок в Excel»): период → таблица для ветслужбы: дата, вид обработки, схема, номера животных, препарат, серия и срок годности (из карточки препарата на складе), доза, способ, кто вносил. Чтобы серия попала в журнал, укажите её в карточке препарата.</li></ul>`],
  ['genetics', 'Генетика: подбор баранов', `
   <p><b>«Ещё → Генетика»:</b> выберите вид и каких маток подбирать (все взрослые, группа или загон). Программа считает родство по записанным матерям и отцам до 5 поколений и показывает рейтинг производителей, кого к какому барану ставить без близкого родства и список запрещённых пар. «Записать случку с ним» — сразу ставит выбранных маток на осеменение.</p>
   <p>Чтобы подбор работал, при окотах указывайте отца, а в карточках — мать и отца.</p>`],
@@ -2915,6 +3114,7 @@ function itemForm(it){
       <label class="row pickrow" style="grid-template-columns:auto 1fr"><input type="checkbox" id="it-gsm" ${v.gsm === false ? '' : 'checked'}><span>В ГСМ — можно выбрать при заправке</span></label>`
     : `${fld('it-unit','Единица',`<select id="it-unit" name="unit">${units.map(u => opt(u,u,v.unit)).join('')}</select>`)}
       ${fld('it-min','Минимальный остаток (необязательно)',`<input id="it-min" name="min" inputmode="decimal" value="${esc(v.min ?? '')}" placeholder="когда показывать «мало»" autocomplete="off">`)}
+      ${v.cat==='feed' ? fld('it-price','Цена за единицу, ₽ (для себестоимости, если нет приходов с суммой)',`<input id="it-price" name="price" inputmode="decimal" value="${esc(v.price ?? '')}" autocomplete="off">`) : ''}
       ${v.cat==='vet' ? `<div class="two">${fld('it-series','Серия',`<input id="it-series" name="series" value="${esc(v.series)}" autocomplete="off">`)}${fld('it-number','Номер',`<input id="it-number" name="number" value="${esc(v.number)}" autocomplete="off">`)}</div>
         ${fld('it-exp','Годен до (необязательно)',`<input id="it-exp" type="date" name="expiry" value="${esc(v.expiry)}">`)}
         <div class="eyebrow" style="margin-top:6px">Как применять</div>
@@ -2934,6 +3134,7 @@ function itemForm(it){
       ev.preventDefault(); const d = Object.fromEntries(new FormData(f)); for(const k in d) d[k] = String(d[k]).trim();
       if(!d.name){ const e = s.querySelector('#iterr'); e.hidden = false; e.textContent = 'Укажите название.'; return; }
       if(isVeh){ d.gsm = s.querySelector('#it-gsm').checked; d.unit = ''; }
+      if('price' in d){ const pr = dec(d.price || ''); if(pr > 0) d.price = round(pr, 2); else if(isEdit) d.price = null; else delete d.price; }
       if(!isVeh){ const mn = dec(d.min || ''); if(mn > 0) d.min = round(mn, 3); else if(isEdit) d.min = null; else delete d.min; }
       const q0 = dec(d.qty0 || ''), date0 = d.date0 || today(); delete d.qty0; delete d.date0;
       if(!isVeh && String(f.querySelector('#it-qty')?.value || '').trim() && !(q0 > 0)){ const e = s.querySelector('#iterr'); e.hidden = false; e.textContent = 'Количество — число больше нуля.'; return; }
