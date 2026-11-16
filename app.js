@@ -1407,6 +1407,7 @@ function bindView(){
   ['cost-m', 'sale-y'].forEach(id => { const el = document.querySelector('#' + id); if(el) el.onchange = () => { if(id === 'cost-m') S.costM = el.value; else S.saleY = +el.value; render(); }; });
   ['fl-y', 'fl-sp', 'fl-br'].forEach(id => { const el = document.querySelector('#' + id); if(el) el.onchange = () => { if(id === 'fl-y') S.flowY = +el.value; if(id === 'fl-sp'){ S.flowSp = el.value; S.flowBr = ''; } if(id === 'fl-br') S.flowBr = el.value; render(); }; });
   document.querySelectorAll('[data-flm]').forEach(b => b.onclick = () => { S.flowMode = b.dataset.flm; render(); });
+  if(document.querySelector('#fcwrap')) fcBind();
   const bb = document.querySelector('#breedblk'); if(bb) bb.ontoggle = () => { S.breedOpen = bb.open; };
   const mq = document.querySelector('#man-q'); if(mq) mq.oninput = () => { S.manQ = mq.value; const tmp = document.createElement('div'); tmp.innerHTML = manualView(); document.querySelector('.manual').replaceWith(tmp.querySelector('.manual')); };
   document.querySelectorAll('[data-penration]').forEach(sel => sel.onchange = () => { const pid = sel.dataset.penration; store.merge('pens', pid, {ration: sel.value || '', rationNo:DEL}); toast(sel.value ? `${penLong(pid)}: ${rationById(sel.value)?.name}` : `${penLong(pid)}: без рациона`); });
@@ -2573,18 +2574,20 @@ function flowMonths(list, y){
 function flowList(sp, br){
   return S.animals.filter(a => (!sp || a.species === sp) && (!br || `${a.species}:${breedName(a)}` === br));
 }
+const FLOW_CSS = `<style>.flowt{overflow-x:auto;border:1px solid var(--line);border-radius:14px}.flowt table{border-collapse:collapse;width:100%;min-width:560px;font-size:14px}.flowt th,.flowt td{padding:9px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}.flowt th{font-size:12px;color:var(--muted);font-weight:600}.flowt td.b{font-weight:700}.flowt tr.tot td{font-weight:700;background:rgba(255,255,255,.04)}.flowt tr.muted td{opacity:.45}</style>`;
 function flowView(){
   let h = `<button class="back" data-tab-go="more">‹ Ещё</button><h2 class="page">Движение поголовья</h2>`;
   if(loading('animals')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
   const y = S.flowY || +today().slice(0, 4), sp = S.flowSp || '', mode = S.flowMode || 'months', br = S.flowBr || '';
   const years = []; for(let k = +today().slice(0, 4); k >= 2020; k--) years.push(k);
   const breeds = [...new Set(S.animals.filter(a => !sp || a.species === sp).map(a => `${a.species}:${breedName(a)}`))].sort((a, b) => a.localeCompare(b, 'ru'));
-  h += `<div class="two">${fld('fl-y', 'Год', `<select id="fl-y">${years.map(k => opt(String(k), String(k), String(y))).join('')}</select>`)}${fld('fl-sp', 'Вид', `<select id="fl-sp">${opt('', 'Овцы и козы', sp)}${opt('sheep', 'Овцы', sp)}${opt('goat', 'Козы', sp)}</select>`)}</div>
-    <div class="segb" role="group"><button data-flm="months" aria-pressed="${mode === 'months'}">По месяцам</button><button data-flm="breeds" aria-pressed="${mode === 'breeds'}">По породам</button></div>`;
+  h += `<div class="two">${mode === 'fc' ? '' : fld('fl-y', 'Год', `<select id="fl-y">${years.map(k => opt(String(k), String(k), String(y))).join('')}</select>`)}${fld('fl-sp', 'Вид', `<select id="fl-sp">${opt('', 'Овцы и козы', sp)}${opt('sheep', 'Овцы', sp)}${opt('goat', 'Козы', sp)}</select>`)}</div>
+    <div class="segb" role="group"><button data-flm="months" aria-pressed="${mode === 'months'}">По месяцам</button><button data-flm="breeds" aria-pressed="${mode === 'breeds'}">По породам</button><button data-flm="fc" aria-pressed="${mode === 'fc'}">Прогноз</button></div>`;
   const th = `<tr><th style="text-align:left">${mode === 'months' ? 'Месяц' : 'Порода'}</th>${FLOW_COLS.map(([, l]) => `<th>${l}</th>`).join('')}</tr>`;
   const td = r => `${FLOW_COLS.map(([k]) => `<td class="${k === 'start' || k === 'end' ? 'b' : ''}">${r[k] ? (['dead', 'slaughter', 'sold'].includes(k) ? '−' : ['born', 'bought'].includes(k) ? '+' : '') + r[k] : (k === 'start' || k === 'end' ? 0 : '')}</td>`).join('')}`;
-  if(mode === 'months'){
+  if(mode === 'months' || mode === 'fc'){
     h += fld('fl-br', 'Порода', `<select id="fl-br">${opt('', 'Все породы', br)}${breeds.map(b => opt(b, (sp ? '' : (b.startsWith('goat') ? 'Козы: ' : 'Овцы: ')) + b.split(':').slice(1).join(':'), br)).join('')}</select>`);
+    if(mode === 'fc') return FLOW_CSS + h + fcBlock(sp, br);
     const {rows, total} = flowMonths(flowList(sp, br), y);
     h += `<div class="flowt"><table><thead>${th}</thead><tbody>${rows.map(r => `<tr${r.from > today() ? ' class="muted"' : ''}><td style="text-align:left">${r.label}</td>${td(r)}</tr>`).join('')}<tr class="tot"><td style="text-align:left">${total.label}</td>${td(total)}</tr></tbody></table></div>`;
   } else {
@@ -2595,7 +2598,7 @@ function flowView(){
   const noArr = S.animals.filter(a => a.status === 'active' && !arrOf(a)).length, noOut = S.animals.filter(a => a.status !== 'active' && !a.outDate).length;
   h += `<p class="muted" style="margin:0">Приплод — по дате рождения. Поступило — купленные и завезённые (дата поступления в карточке животного). Падёж, забой, продажа — по дате выбытия.${noArr ? ` У ${heads(noArr)} нет ни даты рождения, ни даты поступления — они считаются в стаде с начала.` : ''}${noOut ? ` ${heads(noOut)} выбыли без даты — в движение не попадают.` : ''}</p>
     ${canXl('herd') ? `<div class="actions"><button class="btn primary" data-act="flow-xl">Скачать движение за ${y} год в Excel</button></div>` : ''}`;
-  return `<style>.flowt{overflow-x:auto;border:1px solid var(--line);border-radius:14px}.flowt table{border-collapse:collapse;width:100%;min-width:560px;font-size:14px}.flowt th,.flowt td{padding:9px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}.flowt th{font-size:12px;color:var(--muted);font-weight:600}.flowt td.b{font-weight:700}.flowt tr.tot td{font-weight:700;background:rgba(255,255,255,.04)}.flowt tr.muted td{opacity:.45}</style>` + h;
+  return FLOW_CSS + h;
 }
 function flowXl(){
   const y = S.flowY || +today().slice(0, 4);
@@ -2613,6 +2616,107 @@ function flowXl(){
   saveFile(`Движение поголовья ${y}.xlsx`, XL.build(sheets)).then(ok => ok && toast('Движение поголовья сохранено в «Загрузки»'));
 }
 
+
+/* ===== Прогноз движения поголовья (план осеменений → окоты → приплод → ярки на осеменение) ===== */
+const FC_DEF = {conc:60, coef:1.5, fem:50, first:8, rest:2, mort:0, sale:0, cull:0, gest:5};
+const FC_P = [['conc', '% стельности (из осеменённых)', 0, 100], ['coef', 'Выход приплода на 1 матку', 0, 5], ['fem', '% ярочек (самочек) в приплоде', 0, 100], ['first', 'Первое осеменение ярок в возрасте, мес', 4, 24],
+  ['rest', 'Повторное осеменение через, мес после окота', 0, 12], ['mort', '% падежа молодняка', 0, 100], ['sale', 'Продажа / забой баранчиков в возрасте, мес (0 — не продаём)', 0, 36], ['cull', '% выбраковки маток в год', 0, 100], ['gest', 'Беременность, мес', 4, 6]];
+const ymIdx = ym => +ym.slice(0, 4) * 12 + +ym.slice(5, 7) - 1, idxYm = i => `${Math.floor(i / 12)}-${pad(i % 12 + 1)}`, idxLabel = i => `${MONTHS_FL[i % 12]} ${Math.floor(i / 12)}`;
+const idxShort = i => `${MONTHS_FL[i % 12].slice(0, 3)} ${String(Math.floor(i / 12)).slice(2)}`;
+const fcKey = (sp, br) => `${sp || 'all'}|${br || ''}`;
+function fcPlan(key){
+  if(!S.fc) S.fc = {};
+  if(!S.fc[key]){ const saved = setting('forecast')?.plans?.[key]; S.fc[key] = saved ? JSON.parse(JSON.stringify(saved)) : {p:{...FC_DEF}, m:{}, q:{}}; S.fc[key].p = {...FC_DEF, ...S.fc[key].p}; S.fc[key].m ||= {}; S.fc[key].q ||= {}; }
+  return S.fc[key];
+}
+function fcSim(sp, br, plan, endIdx){
+  const P = plan.p, start = ymIdx(today().slice(0, 7)), Q = () => ({}), dueQ = Q(), freeQ = Q(), yFQ = Q(), yMQ = Q();
+  const add = (q, i, n) => { q[i] = (q[i] || 0) + n; };
+  const pc = i => { const v = plan.q[idxYm(i)]; return (v === '' || v == null ? +P.conc : +v) / 100; };
+  let ewes = 0, preg = 0, free = 0, yF = 0, yM = 0, rams = 0, cullAcc = 0; const insQ = {};
+  const first = Math.max(1, +P.first || 8), rest = Math.max(0, +P.rest || 0), sale = +P.sale || 0, gest = Math.max(1, +P.gest || 5);
+  flowList(sp, br).filter(a => a.status === 'active').forEach(a => {
+    const m = ageMonths(a.birth), bIdx = a.birth ? ymIdx(a.birth.slice(0, 7)) : null;
+    if(a.sex === 'f'){
+      const ins = insemOf(a);
+      if(ins){ ewes++; add(insQ, Math.max(start, ymIdx(ins.due.slice(0, 7))), 1); return; }
+      if(m != null ? m >= first : adult(a)){ ewes++; const lb = lastBirth(a.id)?.ev?.date, ri = lb ? ymIdx(lb.slice(0, 7)) + rest : 0; if(ri > start) add(freeQ, ri, 1); else free++; return; }
+      yF++; add(yFQ, bIdx != null ? Math.max(start, bIdx + first) : start + Math.ceil(first / 2), 1); return;
+    }
+    if(sale && m != null && m < sale){ yM++; add(yMQ, Math.max(start, bIdx + sale), 1); return; }
+    if(m != null ? m < 8 : !adult(a)){ yM++; return; }
+    rams++;
+  });
+  Object.entries(insQ).forEach(([i, n]) => { const k = Math.round(n * +P.conc / 100); preg += k; add(dueQ, +i, k); add(freeQ, start + 1, n - k); });
+  const total = () => ewes + yF + yM + rams, rows = [];
+  for(let i = start; i <= endIdx; i++){
+    const r = {i, start:total(), mated:0, conc:0, lamb:0, born:0, dead:0, bf:0, bm:0, toEwes:0, soldM:0, cull:0};
+    const d = dueQ[i] || 0;
+    if(d){ const born = Math.round(d * (+P.coef || 0)), dead = Math.round(born * (+P.mort || 0) / 100), alive = born - dead, f = Math.round(alive * (+P.fem || 0) / 100), mm = alive - f;
+      preg -= d; add(freeQ, i + rest, d); yF += f; add(yFQ, i + first, f); yM += mm; if(sale) add(yMQ, i + sale, mm);
+      Object.assign(r, {lamb:d, born, dead, bf:f, bm:mm}); }
+    free += freeQ[i] || 0;
+    const nf = yFQ[i] || 0; if(nf){ yF -= nf; ewes += nf; free += nf; r.toEwes = nf; }
+    const nm = yMQ[i] || 0; if(nm){ yM -= nm; r.soldM = nm; }
+    cullAcc += ewes * (+P.cull || 0) / 1200; const c = Math.min(free, Math.floor(cullAcc)); cullAcc -= c; if(c > 0){ ewes -= c; free -= c; r.cull = c; }
+    r.free = free;
+    const v = String(plan.m[idxYm(i)] ?? '').trim().toLowerCase(), n = v === 'все' || v === 'all' ? free : Math.min(free, Math.max(0, Math.floor(dec(v) || 0)));
+    if(n > 0){ const k = Math.round(n * pc(i)); preg += k; free -= k; add(dueQ, i + gest, k); r.mated = n; r.conc = k; r.due = idxLabel(i + gest); r.dueS = idxShort(i + gest); }
+    Object.assign(r, {end:total(), ewes, preg, yF, yM, rams});
+    rows.push(r);
+  }
+  return rows;
+}
+const R0 = n => Math.round(n || 0);
+const FC_COLS = [['start', 'На начало'], ['mated', 'Осеменено'], ['conc', 'Стельных'], ['lamb', 'Окот, маток'], ['born', 'Приплод'], ['bf', '♀'], ['bm', '♂'], ['dead', 'Падёж'], ['toEwes', 'Ярки → в маточное'], ['soldM', 'Продано ♂'], ['cull', 'Выбраковано'], ['end', 'На конец'], ['ewes', 'Маток'], ['preg', 'Стельных всего'], ['yF', 'Молодняк ♀'], ['yM', 'Молодняк ♂'], ['rams', 'Производители']];
+function fcResults(sp, br, y){
+  const plan = fcPlan(fcKey(sp, br)), rows = fcSim(sp, br, plan, y * 12 + 11), inY = rows.filter(r => Math.floor(r.i / 12) === y);
+  const sum = k => inY.reduce((t, r) => t + (r[k] || 0), 0), last = inY[inY.length - 1] || {};
+  const table = `<div class="flowt"><table style="min-width:1100px"><thead><tr><th style="text-align:left">Месяц</th>${FC_COLS.map(([, l]) => `<th>${l}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr${Math.floor(r.i / 12) !== y ? ' class="muted"' : ''}><td style="text-align:left">${idxLabel(r.i)}</td>${FC_COLS.map(([k]) => `<td class="${k === 'start' || k === 'end' ? 'b' : ''}">${R0(r[k]) || (k === 'start' || k === 'end' ? 0 : '')}</td>`).join('')}</tr>`).join('')}
+    <tr class="tot"><td style="text-align:left">За ${y} год</td>${FC_COLS.map(([k]) => `<td>${k === 'start' ? R0(inY[0]?.start) : ['end', 'ewes', 'preg', 'yF', 'yM', 'rams'].includes(k) ? R0(last[k]) : R0(sum(k)) || ''}</td>`).join('')}</tr></tbody></table></div>`;
+  const stats = `<div class="stats"><div class="stat"><div class="v">${R0(sum('born'))}</div><div class="l">приплод за ${y} год: ♀ ${R0(sum('bf'))} · ♂ ${R0(sum('bm'))}</div></div><div class="stat"><div class="v">${R0(inY[0]?.start)} → ${R0(last.end)}</div><div class="l">поголовье на начало → на конец ${y} года</div></div>
+    <div class="stat"><div class="v">${R0(last.ewes)}</div><div class="l">маток на конец года (ярок переведено: ${R0(sum('toEwes'))})</div></div><div class="stat"><div class="v">${R0(sum('mated'))}</div><div class="l">осеменений за год, стельных ${R0(sum('conc'))}</div></div></div>`;
+  return {rows, html:stats + table};
+}
+function fcBlock(sp, br){
+  const t0 = +today().slice(0, 4), y = S.fcY || t0 + 1, plan = fcPlan(fcKey(sp, br)), {rows, html} = fcResults(sp, br, y);
+  const can = canManage('herd'), saved = setting('forecast')?.plans?.[fcKey(sp, br)];
+  let h = `<div id="fcwrap">${fld('fc-y', 'Прогноз до конца года', `<select id="fc-y">${[t0, t0 + 1, t0 + 2].map(k => opt(String(k), String(k), String(y))).join('')}</select>`)}
+    <p class="muted" style="margin:0">Программа берёт текущее стадо${br ? ' выбранной породы' : ''} (маток, ярок, молодняк, уже осеменённых) и по вашему плану считает каждый месяц: кого осеменили → через ${plan.p.gest} мес окот → приплод (♀/♂) → ярочки в ${plan.p.first} мес идут на осеменение. Приплод считается той же породы, что и мать.</p>
+    <details class="panel" ${S.fcOpen !== false ? 'open' : ''} id="fc-par"><summary class="eyebrow" style="cursor:pointer">Показатели</summary><div class="two" style="margin-top:8px">${FC_P.map(([k, l]) => fld('fcp-' + k, l, `<input id="fcp-${k}" data-fcp="${k}" inputmode="decimal" value="${esc(String(plan.p[k]).replace('.', ','))}" autocomplete="off">`)).join('')}</div></details>
+    <div class="panel"><div class="eyebrow">План осеменений по месяцам</div><p class="muted" style="margin:0">«Осеменить» — сколько голов поставить (число) или «все» — всех свободных маток месяца. «% стельн.» — если в этом месяце ожидаете другой процент, иначе берётся общий.</p>
+    <div class="actions"><button class="btn" id="fc-all">Всех свободных — каждый месяц</button><button class="btn" id="fc-clr">Очистить план</button></div>
+    <div class="flowt fcplan"><style>.fcplan th,.fcplan td{padding:6px 6px!important}</style><table style="min-width:0"><thead><tr><th style="text-align:left">Месяц</th><th>Своб.</th><th>Осеменить</th><th>%</th><th>Окот</th></tr></thead><tbody>${rows.map(r => { const ym = idxYm(r.i);
+      return `<tr><td style="text-align:left">${idxShort(r.i)}</td><td data-fcfree="${ym}">${R0(r.free)}</td><td><input data-fcm="${ym}" value="${esc(plan.m[ym] ?? '')}" placeholder="0" inputmode="numeric" style="width:58px;text-align:right;padding:6px" autocomplete="off"></td><td><input data-fcq="${ym}" value="${esc(plan.q[ym] ?? '')}" placeholder="${esc(String(plan.p.conc))}" inputmode="numeric" style="width:44px;text-align:right;padding:6px" autocomplete="off"></td><td data-fcdue="${ym}">${r.mated ? `${R0(r.conc * plan.p.coef)} → ${r.dueS}` : ''}</td></tr>`; }).join('')}</tbody></table></div></div>
+    <div id="fc-res">${html}</div>
+    <p class="muted" style="margin:0">Считается в целых головах. Осеменённые, но не оставшиеся стельными, возвращаются в свободные и их можно осеменить в следующем месяце. Уже поставленные на осеменение (в программе) учтены: окот — в месяц ожидаемой даты, с общим % стельности.</p>
+    <div class="actions">${can ? `<button class="btn primary" id="fc-save">Сохранить план${saved ? '' : ' (пока не сохранён)'}</button>` : ''}${canXl('herd') ? `<button class="btn" id="fc-xl">Скачать прогноз в Excel</button>` : ''}</div></div>`;
+  return h;
+}
+function fcBind(){
+  const sp = S.flowSp || '', br = S.flowBr || '', key = fcKey(sp, br), plan = fcPlan(key), y = () => S.fcY || +today().slice(0, 4) + 1;
+  const upd = () => { const {rows, html} = fcResults(sp, br, y()); document.querySelector('#fc-res').innerHTML = html;
+    rows.forEach(r => { const ym = idxYm(r.i), f = document.querySelector(`[data-fcfree="${ym}"]`), d = document.querySelector(`[data-fcdue="${ym}"]`); if(f) f.textContent = R0(r.free); const qi = document.querySelector(`[data-fcq="${ym}"]`); if(qi) qi.placeholder = String(plan.p.conc).replace('.', ','); if(d) d.textContent = r.mated ? `${R0(r.conc * plan.p.coef)} → ${r.dueS}` : ''; }); };
+  document.querySelectorAll('[data-fcp]').forEach(el => el.oninput = () => { const v = dec(el.value); if(el.value.trim() !== '' && !isNaN(v)){ plan.p[el.dataset.fcp] = v; upd(); } });
+  document.querySelectorAll('[data-fcm]').forEach(el => el.oninput = () => { const v = el.value.trim(); if(v) plan.m[el.dataset.fcm] = v; else delete plan.m[el.dataset.fcm]; upd(); });
+  document.querySelectorAll('[data-fcq]').forEach(el => el.oninput = () => { const v = el.value.trim(); if(v && !isNaN(dec(v))) plan.q[el.dataset.fcq] = dec(v); else delete plan.q[el.dataset.fcq]; upd(); });
+  const fy = document.querySelector('#fc-y'); if(fy) fy.onchange = () => { S.fcY = +fy.value; render(); };
+  const par = document.querySelector('#fc-par'); if(par) par.ontoggle = () => { S.fcOpen = par.open; };
+  const all = document.querySelector('#fc-all'); if(all) all.onclick = () => { fcSim(sp, br, plan, y() * 12 + 11).forEach(r => plan.m[idxYm(r.i)] = 'все'); render(); };
+  const clr = document.querySelector('#fc-clr'); if(clr) clr.onclick = () => { plan.m = {}; plan.q = {}; render(); };
+  const sv = document.querySelector('#fc-save'); if(sv) sv.onclick = () => { const cur = setting('forecast') || {}; store.set('settings', 'forecast', {plans:{...(cur.plans || {}), [key]:JSON.parse(JSON.stringify(plan))}}); toast('План сохранён — его увидят все'); };
+  const xl = document.querySelector('#fc-xl'); if(xl) xl.onclick = () => fcXl(sp, br, y());
+}
+function fcXl(sp, br, y){
+  const plan = fcPlan(fcKey(sp, br)), rows = fcSim(sp, br, plan, y * 12 + 11), who = `${sp ? (sp === 'goat' ? 'козы' : 'овцы') : 'овцы и козы'}${br ? ', ' + br.split(':').slice(1).join(':') : ''}`;
+  const par = {name:'Показатели', title:`Прогноз поголовья до конца ${y} года — ${who}`, note:`Составлен ${fmtD(today())}`, cols:[{h:'Показатель', w:52}, {h:'Значение', w:12, t:'n'}], rows:FC_P.map(([k, l]) => [l, +plan.p[k]])};
+  const pl = {name:'План осеменений', title:`План осеменений — ${who}`, cols:[{h:'Месяц', w:16}, {h:'Свободных маток', w:12, t:'i'}, {h:'Осеменить, гол.', w:12, t:'i'}, {h:'% стельности', w:10, t:'n'}, {h:'Стельных', w:10, t:'i'}, {h:'Окот ожидается', w:16}, {h:'Приплод ожидается', w:12, t:'i'}],
+    rows:rows.map(r => [idxLabel(r.i), R0(r.free), R0(r.mated), r.mated ? (plan.q[idxYm(r.i)] ?? plan.p.conc) : '', R0(r.conc), r.mated ? r.due : '', r.mated ? R0(r.conc * plan.p.coef) : ''])};
+  const inY = rows.filter(r => Math.floor(r.i / 12) === y), last = inY[inY.length - 1] || {};
+  const res = {name:'Движение (прогноз)', title:`Прогноз движения поголовья — ${who}`, cols:[{h:'Месяц', w:16}, ...FC_COLS.map(([, l]) => ({h:l, w:10, t:'i'}))],
+    rows:[...rows.map(r => [idxLabel(r.i), ...FC_COLS.map(([k]) => R0(r[k]))]), [`За ${y} год`, ...FC_COLS.map(([k]) => k === 'start' ? R0(inY[0]?.start) : ['end', 'ewes', 'preg', 'yF', 'yM', 'rams'].includes(k) ? R0(last[k]) : R0(inY.reduce((t, r) => t + (r[k] || 0), 0)))]]};
+  saveFile(`Прогноз поголовья ${y}${br ? ' ' + br.split(':').slice(1).join(':') : ''}.xlsx`, XL.build([res, pl, par])).then(ok => ok && toast('Прогноз сохранён в «Загрузки»'));
+}
 
 /* ===== Аналитика: матки и выбраковка, привесы, себестоимость, продажи, журнал ветобработок ===== */
 const anTable = (head, rows, cls = '') => `<div class="flowt ${cls}"><table><thead><tr>${head.map((h, i) => `<th style="${i ? '' : 'text-align:left'}">${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
@@ -2893,6 +2997,7 @@ const MANUAL = [
   <li><b>Список одной группы или загона:</b> «Стадо» → нажмите группу (ярки, дойные, на мясо…), «На осеменении» или найдите поиском → <b>«Выгрузить в Excel»</b>. В карточке загона — «Выгрузить загон в Excel».</li>
   <li><b>Акт выбытия из стада</b> (форма СП-54, «Ещё»): период (например 01.10–31.10), номер акта, дата, ФИО ответственного → программа соберёт всех со статусом «Забой» и «Пал(а)» за период; упитанность, массу и диагноз можно поправить прямо там → «Скачать акт в Excel».</li>
   <li><b>Движение поголовья</b> («Ещё»): год, вид, «По месяцам» (можно выбрать породу) или «По породам» — на начало, приплод, поступило, падёж, забой, продано, на конец. «Скачать в Excel» — листы: всего, овцы, козы, по породам за год, породы по месяцам. Для купленных животных укажите в карточке «Поступил(а) в хозяйство».</li>
+  <li><b>Прогноз поголовья</b> («Движение поголовья» → «Прогноз»): выберите вид и породу (например, лакон), год, до которого считать. В «Показателях» — % стельности, выход приплода на матку (например 1,5), % ярочек в приплоде (50), в каком возрасте ярки идут на первое осеменение (8 мес), через сколько месяцев после окота матку снова осеменяют, % падежа молодняка, в каком возрасте продаёте баранчиков, % выбраковки маток в год. В «Плане осеменений» по каждому месяцу впишите, сколько голов ставите (или «все» — всех свободных маток). Программа сама посчитает: через 5 месяцев окот, сколько родится ♀ и ♂, когда ярочки перейдут в маточное поголовье и их можно осеменять, и сколько голов будет на конец каждого месяца. Уже осеменённые в программе учитываются автоматически. «Сохранить план» — план увидят все; «Скачать прогноз в Excel» — движение, план осеменений и показатели.</li>
   <li><b>Сводка</b> — поголовье, приплод, молоко, деньги за год. <b>Финансы</b> — доходы и расходы по месяцам («Добавить запись»).</li></ul>
   <p>Файлы сохраняются в «Загрузки» телефона или компьютера.</p>`],
  ['analytics', 'Матки, привесы, себестоимость, продажи', `
