@@ -41,7 +41,7 @@ function insemOf(a){
 }
 const STATUS = {active:'В стаде', sold:'Продан(а)', slaughter:'Забой', dead:'Пал(а)'};
 const ET = {
-  ill:{t:'Лечение', vet:1}, vac:{t:'Вакцинация', vet:1}, treat:{t:'Дегельминтизация', vet:1}, vit:{t:'Витаминизация', vet:1}, birth:{t:'Окот'},
+  ill:{t:'Лечение', vet:1}, vac:{t:'Вакцинация', vet:1}, treat:{t:'Дегельминтизация', vet:1}, vit:{t:'Витаминизация', vet:1}, diag:{t:'Исследование (кровь, туберкулинизация)', vet:1}, birth:{t:'Окот'},
   manip:{t:'Манипуляция'}, weight:{t:'Взвешивание'}, mating:{t:'Поставили на осеменение'}, shear:{t:'Стрижка', hide:1}, other:{t:'Другое'},
   dose:{t:'Процедура по схеме', hide:1}, result:{t:'Результат лечения', hide:1}, task:{t:'Дело по плану', hide:1}
 };
@@ -181,7 +181,7 @@ function firebaseBackend(fs, db){
   return {
     subscribe(col, next, fail){
       return fs.onSnapshot(fs.collection(db, col), {includeMetadataChanges:true},
-        snap => next(snap.docs.map(d => ({id:d.id, ...d.data()})), snap.metadata.hasPendingWrites), fail);
+        snap => next(snap.docs.map(d => ({id:d.id, ...d.data()})), snap.metadata.hasPendingWrites, snap.metadata.fromCache), fail);
     },
     newId(col){ return fs.doc(fs.collection(db, col)).id; },
     write(col, id, data, merge){ return merge ? fs.setDoc(fs.doc(db, col, id), conv(data), {merge:true}) : fs.setDoc(fs.doc(db, col, id), data); },
@@ -312,8 +312,11 @@ async function boot(){
       import(base+'firebase-app.js'), import(base+'firebase-firestore.js'), import(base+'firebase-auth.js')
     ]);
     const fapp = app.initializeApp(cfg);
-    const db = fs.initializeFirestore(fapp, {ignoreUndefinedProperties:true,
+    // Если потоковая связь с базой не проходит (антивирус, прокси), включаем «длинные опросы» — работает медленнее, но надёжно
+    let lp = false; try{ lp = localStorage.getItem('otara-lp') === '1'; }catch(_){}
+    const db = fs.initializeFirestore(fapp, {ignoreUndefinedProperties:true, ...(lp ? {experimentalForceLongPolling:true} : {}),
       localCache: fs.persistentLocalCache({tabManager: fs.persistentMultipleTabManager()})});
+    S.longPoll = lp;
     const auth = au.getAuth(fapp);
     fb = {db, auth, fs, au};
     au.onAuthStateChanged(auth, user => {
@@ -330,7 +333,8 @@ async function boot(){
       };
       setMode('loading');
       setTimeout(() => { if(!got && S.uid === user.uid){ try{ S.userRole = localStorage.getItem(rk) || ''; }catch(_){} got = true; decide(); } }, 6000);
-      isAdminEmail(user.email).then(ok => { owner = ok; S.owner = ok; decide(); });
+      isAdminEmail(user.email).catch(() => false).then(ok => { owner = ok; S.owner = ok; decide(); });
+      clearTimeout(S.slowT); S.slowLoad = false; S.slowT = setTimeout(() => { if(S.mode === 'loading' && S.uid === user.uid){ S.slowLoad = true; render(); } }, 15000);
       S.roleUnsub = be.watchDoc('users', em, (d, fromCache) => {
         let r = d?.role || '';
         if(!d && fromCache){ try{ r = localStorage.getItem(rk) || ''; }catch(_){} if(!r && !got) return; }
@@ -346,12 +350,16 @@ async function boot(){
 function detachData(){ unsubs.forEach(u => u()); unsubs = []; COLS.forEach(c => S[c] = []); try{ S.usersUnsub && S.usersUnsub(); }catch(_){} S.usersUnsub = null; S.users = []; }
 function detach(){ detachData(); try{ S.roleUnsub && S.roleUnsub(); }catch(_){} S.roleUnsub = null; }
 function attach(be){
-  detachData(); S.be = be; S.loaded = {}; S.pending = {};
+  detachData(); S.be = be; S.loaded = {}; S.pending = {}; S.cacheOnly = {}; S.syncErr = ''; S.attachedAt = Date.now();
+  clearTimeout(S.syncTimer); setTimeout(syncProbe, 20000); S.syncTimer = setTimeout(() => { updateSync();
+    if(!S.local && navigator.onLine && Object.values(S.cacheOnly || {}).some(Boolean) && !S.longPoll){
+      try{ if(!sessionStorage.getItem('otara-lp-tried')){ sessionStorage.setItem('otara-lp-tried', '1'); localStorage.setItem('otara-lp', '1'); toast('Нет связи с базой — переключаю способ связи…', 4000); setTimeout(() => location.reload(), 1500); } }catch(_){}
+    } }, 12000);
   for(const c of COLS){
-    unsubs.push(be.subscribe(c, (docs, pend) => {
-      S[c] = c === 'rations' ? docs.filter(d => !d.deleted) : docs; S.loaded[c] = 1; S.pending[c] = !!pend;
+    unsubs.push(be.subscribe(c, (docs, pend, cache) => {
+      S[c] = c === 'rations' ? docs.filter(d => !d.deleted) : docs; S.loaded[c] = 1; S.pending[c] = !!pend; S.cacheOnly[c] = !!cache; if(!cache) S.serverAt = Date.now();
       updateSync(); scheduleRender(); scheduleFeed(); if(c==='animals') scheduleGroups(); migrateUsers();
-    }, err => { if(err && err.code==='permission-denied') setMode('denied'); }));
+    }, err => { if(err && err.code==='permission-denied') setMode('denied'); else { S.syncErr = err?.code || 'error'; updateSync(); } }));
   }
   S.mode = 'live'; updateSync(); render();
 }
@@ -372,19 +380,47 @@ function updateSync(){
     else if(S.local){ cls='off'; txt='на этом устройстве'; }
     else {
       const pend = Object.values(S.pending).some(Boolean);
+      const cache = Object.values(S.cacheOnly || {}).some(Boolean) && Date.now() - (S.attachedAt || 0) > 9000;
       if(!navigator.onLine){ cls='off'; txt = pend ? 'офлайн · ждёт отправки' : 'офлайн'; }
+      else if(S.syncErr || cache){ cls='err'; txt = pend ? 'нет связи с базой · ждёт отправки' : 'нет связи с базой'; }
       else if(pend){ cls='off'; txt='отправка…'; }
       else { cls='on'; txt='синхронизировано'; }
     }
   }
-  el.innerHTML = txt ? `<span class="dot ${cls}"></span><span>${txt}</span>` : '';
+  el.innerHTML = txt ? `<span class="dot ${cls}"${cls === 'err' ? ' style="background:#ff6b6b"' : ''}></span><span>${txt}</span>` : '';
+  el.style.cursor = cls === 'err' ? 'pointer' : '';
+  el.onclick = cls === 'err' ? syncHelp : null;
 }
 addEventListener('online', updateSync);
 addEventListener('offline', updateSync);
-function toast(msg){
+// Проверка «вживую»: читаем один документ прямо с сервера и сравниваем с тем, что пришло по подписке.
+// Если сервер недоступен или подписка отстала (антивирус/прокси «глушат» поток) — показываем «нет связи с базой».
+async function syncProbe(){
+  if(!fb || S.local || S.mode !== 'live' || !navigator.onLine || document.hidden) return;
+  const docs = [['settings', 'schemes'], ['settings', 'people'], ['settings', 'feed']];
+  try{
+    const res = await Promise.race([Promise.all(docs.map(([c, id]) => fb.fs.getDocFromServer(fb.fs.doc(fb.db, c, id)).catch(e => e?.code === 'permission-denied' ? null : Promise.reject(e)))), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))]);
+    let stale = false;
+    res.forEach((snap, i) => { if(!snap || !snap.exists()) return; const srv = +snap.data().updated || 0, loc = +setting(docs[i][1])?.updated || 0; if(srv > loc + 1000) stale = true; });
+    if(stale){ S.staleHits = (S.staleHits || 0) + 1; if(S.staleHits >= 2) S.syncErr = 'stale'; } else { S.staleHits = 0; if(S.syncErr === 'stale' || S.syncErr === 'probe') S.syncErr = ''; }
+  }catch(_){ S.syncErr = 'probe'; }
+  updateSync();
+  if(S.syncErr && !S.longPoll){ try{ if(!sessionStorage.getItem('otara-lp-tried')){ sessionStorage.setItem('otara-lp-tried', '1'); localStorage.setItem('otara-lp', '1'); toast('Связь с базой зависла — переключаю способ связи…', 4000); setTimeout(() => location.reload(), 1500); } }catch(_){} }
+}
+setInterval(syncProbe, 90000); document.addEventListener('visibilitychange', () => { if(!document.hidden) setTimeout(syncProbe, 4000); });
+function syncHelp(){
+  openSheet('Нет связи с базой', `<p>Интернет есть, но база не отвечает. Вы видите данные, сохранённые на этом устройстве; новые записи других людей не приходят, ваши — ждут отправки.</p>
+    <p class="muted">Частые причины: антивирус проверяет защищённые соединения (Касперский, ESET и т. п.), рабочий прокси, мобильный интернет с ограничениями, ссылка открыта внутри Telegram/WhatsApp.</p>
+    <div class="actions"><button class="btn" id="sh-lp">Другой способ связи${S.longPoll ? ' (включён)' : ''}</button><button class="btn" id="sh-reset">Сбросить данные на этом устройстве</button></div>
+    <p class="muted" style="margin:0">«Сбросить» удалит только копию данных в этом браузере (неотправленные записи пропадут) и заново загрузит всё из базы. В базе ничего не удаляется.</p>`, s => {
+    s.querySelector('#sh-lp').onclick = () => { try{ localStorage.setItem('otara-lp', S.longPoll ? '0' : '1'); }catch(_){} location.reload(); };
+    s.querySelector('#sh-reset').onclick = async () => { try{ await fb.fs.terminate(fb.db); await fb.fs.clearIndexedDbPersistence(fb.db); }catch(_){} try{ localStorage.setItem('otara-lp', '1'); }catch(_){} location.reload(); };
+  });
+}
+function toast(msg, ms = 3500){
   document.querySelectorAll('.toast').forEach(x => x.remove());
   const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t);
-  setTimeout(() => t.remove(), 3500);
+  setTimeout(() => t.remove(), ms);
 }
 let rq = 0;
 function scheduleRender(){ if(rq) return; rq = requestAnimationFrame(() => { rq = 0; render(); refreshSheet(); }); }
@@ -562,7 +598,7 @@ const backTo = title => `<button class="back" data-tab-go="more">‹ Ещё</but
 function gateView(){
   const msg = (t, p) => `<div class="empty"><h2>${t}</h2><p>${p}</p></div>`;
   switch(S.mode){
-    case 'loading': return msg('Загрузка…','Открываем данные на телефоне.');
+    case 'loading': return msg('Загрузка…','Открываем данные на телефоне.') + (S.slowLoad ? `<div class="empty"><p>Долго не открывается? Значит, телефон не может связаться с базой. Часто так бывает на мобильном интернете с ограничениями: подключитесь к Wi-Fi или другой сети и обновите страницу. Не помогает — откройте ссылку в Chrome или Safari (не внутри Telegram/WhatsApp).</p><div class="actions"><button class="btn" onclick="location.reload()">Обновить</button><button class="btn" data-act="logout">Выйти</button></div></div>` : '');
     case 'login': return `<form class="login" id="lf" novalidate>
       <div class="loginbrand"><img src="icons/logo-round.png" alt=""><div><div class="eyebrow">Учёт овец и коз</div><h1>Берегиня</h1></div></div>
       <p>Войдите своей почтой и паролем. Первый вход — с интернетом, дальше программа работает и без него.</p>
@@ -730,7 +766,7 @@ function quickCard(milkDay){
     canTab('daily') && `<button class="qa p" data-nav="daily">${hico('report')}Отчёт за текущий день</button>`
   ].filter(Boolean).join('');
   const mini = [
-    canCreate('vet') && `<button data-vnew="ill">${hico('syringe')}Лечение</button><button data-vnew="vac">${hico('syringe')}Вакцинация</button><button data-vnew="vit">${hico('syringe')}Витамини&shy;зация</button><button data-vnew="treat">${hico('syringe')}Дегельмин&shy;тизация</button>`,
+    canCreate('vet') && `<button data-vnew="ill">${hico('syringe')}Лечение</button><button data-vnew="vac">${hico('syringe')}Вакцинация</button><button data-vnew="vit">${hico('syringe')}Витамини&shy;зация</button><button data-vnew="treat">${hico('syringe')}Дегельмин&shy;тизация</button><button data-vnew="diag">${hico('syringe')}Исследо&shy;вание</button>`,
     canCreate('manip') && `<button data-vnew="manip">${hico('syringe')}Манипуляция</button>`,
     canCreate('birth') && `<button data-act="q-birth">${ico('birth')}Окот</button>`,
     canCreate('milk') && `<button data-act="milkout">${ico('truck')}Отгрузка молока</button>`,
@@ -1068,7 +1104,7 @@ const ROLE_DEF = {
   viewer:  {l:'Пользователь (просмотр)', d:'Только просмотр и выгрузка в Excel — напр. для бухгалтера'},
   pending: {l:'Нет доступа (заявка)', d:'Новая заявка или отключённый сотрудник — программа не открывается'}
 };
-const VET_TYPES = new Set(['ill', 'vac', 'treat', 'vit', 'dose', 'result']);
+const VET_TYPES = new Set(['ill', 'vac', 'treat', 'vit', 'diag', 'dose', 'result']);
 const ALL_TABS = ['home', 'herd', 'pens', 'events', 'vet', 'milk', 'stock', 'more', 'plan', 'money', 'stats', 'feedsheet', 'feeding', 'manual', 'flow', 'ewes', 'gain', 'cost', 'sales', 'yplan', 'genetics', 'daily'];
 const ROLE = {
   admin:   {create:'*', edit:'*', manage:'*', tabs:[...ALL_TABS, 'log', 'people'], stock:['feed', 'fuel', 'vet', 'tech'], xl:'*'},
@@ -1529,10 +1565,10 @@ function askConfirm(holder, text, onYes, yesLabel){
 }
 
 /* ===== Ветеринария: схемы, курсы по дням, результат ===== */
-const REP_T = {vac:'Ревакцинация', deworm:'Повторная дегельминтизация', vit:'Повторная витаминизация'};
-const SCHEME_KIND = {ill:'Лечение', vac:'Вакцинация', deworm:'Дегельминтизация', vit:'Витаминизация'};
-const KIND_OF_TYPE = {ill:'ill', vac:'vac', treat:'deworm', vit:'vit'};
-const TYPE_OF_KIND = {ill:'ill', vac:'vac', deworm:'treat', vit:'vit'};
+const REP_T = {vac:'Ревакцинация', deworm:'Повторная дегельминтизация', vit:'Повторная витаминизация', diag:'Повторное исследование'};
+const SCHEME_KIND = {ill:'Лечение', vac:'Вакцинация', deworm:'Дегельминтизация', vit:'Витаминизация', diag:'Исследование (кровь, туберкулинизация)'};
+const KIND_OF_TYPE = {ill:'ill', vac:'vac', treat:'deworm', vit:'vit', diag:'diag'};
+const TYPE_OF_KIND = {ill:'ill', vac:'vac', deworm:'treat', vit:'vit', diag:'diag'};
 const ROUTES = ['в/м','п/к','в/в','внутрь','наружно','интрацистернально','интраназально','в/матку'];
 const RESULT = {ok:'Здорово', repeat:'Повторить схему', switch:'Другая схема', dead:'Пало / выбраковано'};
 const schemes = () => setting('schemes')?.list || [];
@@ -1579,7 +1615,7 @@ function vetView(){
   let h = `<button class="back" data-nav="herd">‹ Стадо</button><h2 class="page">Ветеринария</h2>`;
   if(loading('events', 'settings')) return h + `<div class="empty"><p>Загружаем…</p></div>`;
   const tasks = vetTasks(), act = activeCourses(), sub = S.vetSub || 'today';
-  if(canCreate('vet')) h += `<div class="actions"><button class="btn primary" data-vnew="ill">Лечение</button><button class="btn" data-vnew="vac">Вакцинация</button><button class="btn" data-vnew="treat">Дегельминтизация</button><button class="btn" data-vnew="vit">Витаминизация</button></div>`;
+  if(canCreate('vet')) h += `<div class="actions"><button class="btn primary" data-vnew="ill">Лечение</button><button class="btn" data-vnew="vac">Вакцинация</button><button class="btn" data-vnew="treat">Дегельминтизация</button><button class="btn" data-vnew="vit">Витаминизация</button><button class="btn" data-vnew="diag">Исследование (кровь, ТБЦ)</button></div>`;
   if(canXl('vet')) h += `<div class="actions"><button class="btn" data-act="vet-journal">📋 Журнал обработок в Excel (для ветслужбы)</button></div>`;
   h += `<div class="segb" role="group">${[['today', `Сегодня${tasks.length ? ' · ' + tasks.length : ''}`], ['courses', `Курсы${act.length ? ' · ' + act.length : ''}`], ['schemes', 'Схемы']].map(([k, l]) => `<button data-vsub="${k}" aria-pressed="${sub === k}">${l}</button>`).join('')}</div>`;
   if(sub === 'today'){
@@ -1622,9 +1658,10 @@ function schemeForm(sc, kind0){
   const isEdit = !!sc, v = sc ? JSON.parse(JSON.stringify(sc)) : {kind:kind0 || S.vetKind || 'ill', name:'', steps:[{name:'', dose:'', route:'', from:1, days:1}], checkDay:'', repeat:'', note:''};
   const drugs = itemsOf('vet');
   const stepRow = (st, i) => `<div class="panel step" data-i="${i}">
-    <div class="kv"><span class="eyebrow">Препарат ${i + 1}</span>${'<button type="button" class="link" data-rm="' + i + '">убрать</button>'}</div>
-    ${fld('st-item-' + i, 'Из аптеки', `<select data-k="item">${opt('', '— выбрать —', st.item || '')}${drugs.map(d => opt(d.id, d.name, st.item)).join('')}</select>`)}
-    ${fld('st-name-' + i, 'Название в схеме', `<input data-k="name" value="${esc(st.name)}" placeholder="напр. Кетопрофен" autocomplete="off">`)}
+    <div class="kv"><span class="eyebrow">Препарат / процедура ${i + 1}</span>${'<button type="button" class="link" data-rm="' + i + '">убрать</button>'}</div>
+    ${fld('st-item-' + i, 'Откуда препарат', `<select data-k="item">${opt('', 'Не из аптеки (государственный / процедура)', st.item || '')}${drugs.map(d => opt(d.id, 'Аптека: ' + d.name, st.item)).join('')}</select>`)}
+    ${fld('st-name-' + i, 'Название *', `<input data-k="name" value="${esc(st.name)}" placeholder="напр. вакцина против сибирской язвы, туберкулин, взятие крови" autocomplete="off">`)}
+    <div class="two" data-k="gov" ${st.item ? 'hidden' : ''}>${fld('st-ser-' + i, 'Серия', `<input data-k="series" value="${esc(st.series || '')}" placeholder="для журнала ветслужбы" autocomplete="off">`)}${fld('st-exp-' + i, 'Годен до', `<input data-k="expiry" type="date" value="${esc(st.expiry || '')}">`)}</div>
     <div class="two">${fld('st-dose-' + i, 'Доза', `<input data-k="dose" value="${esc(st.dose)}" placeholder="0,5 мл" autocomplete="off">`)}${fld('st-route-' + i, 'Как вводить', `<select data-k="route">${opt('', '—', st.route || '')}${ROUTES.map(r => opt(r, r, st.route)).join('')}</select>`)}</div>
     <div class="two">${fld('st-from-' + i, 'С какого дня', `<input data-k="from" type="number" min="1" step="1" inputmode="numeric" value="${esc(st.from || 1)}">`)}${fld('st-days-' + i, 'Сколько дней', `<input data-k="days" type="number" min="1" step="1" inputmode="numeric" value="${esc(st.days || 1)}">`)}</div>
     <p class="muted" data-k="info" style="margin:0">${esc(vetItemInfo(itemById(st.item)))}</p></div>`;
@@ -1646,11 +1683,11 @@ function schemeForm(sc, kind0){
   </form>`;
   openSheet(isEdit ? 'Схема' : 'Новая схема', body, s => {
     const f = s.querySelector('#scf'), box = s.querySelector('#sc-steps');
-    const read = () => [...box.querySelectorAll('.step')].map(el => { const g = k => el.querySelector(`[data-k=${k}]`).value.trim(); return {item:g('item'), name:g('name'), dose:g('dose'), route:g('route'), from:Math.max(1, parseInt(g('from')) || 1), days:Math.max(1, parseInt(g('days')) || 1)}; });
+    const read = () => [...box.querySelectorAll('.step')].map(el => { const g = k => el.querySelector(`[data-k=${k}]`).value.trim(); return {item:g('item'), name:g('name'), dose:g('dose'), route:g('route'), ...(g('item') ? {} : {series:g('series'), expiry:g('expiry')}), from:Math.max(1, parseInt(g('from')) || 1), days:Math.max(1, parseInt(g('days')) || 1)}; });
     const sync = () => {
       const k = s.querySelector('#sc-kind').value; s.querySelector('#sc-ill').hidden = k !== 'ill'; s.querySelector('#sc-rep').hidden = k === 'ill';
       const rt = REP_T[k] || 'Повтор', ron = s.querySelector('#sc-ron').checked, rd = parseInt(s.querySelector('#sc-repeat').value) || 0;
-      s.querySelector('#sc-rept').textContent = rt; s.querySelector('#sc-ronl').textContent = 'Нужна ' + rt.toLowerCase(); s.querySelector('#sc-rbox').hidden = !ron;
+      s.querySelector('#sc-rept').textContent = rt; s.querySelector('#sc-ronl').textContent = (k === 'diag' ? 'Нужно ' : 'Нужна ') + rt.toLowerCase(); s.querySelector('#sc-rbox').hidden = !ron;
       s.querySelector('#sc-rhint').textContent = ron ? `Через ${rd || 'N'} ${plural(rd || 5, 'день', 'дня', 'дней')} после обработки тем же животным, кому её сделали, автоматически придёт «${rt}» — в «Событиях», на главной и в календаре. Нажмите «Сделать» — откроется запись уже с этими животными.` : '';
       const st = read().filter(x => x.name), tmp = {kind:k, steps:st, checkDay:parseInt(s.querySelector('#sc-check').value) || ''};
       s.querySelector('#sc-sum').textContent = st.length ? `Курс ${schemeLastDay(tmp)} ${plural(schemeLastDay(tmp), 'день', 'дня', 'дней')}${k === 'ill' ? `, результат на ${schemeCheckDay(tmp)}-й день` : ''}.` : '';
@@ -1660,7 +1697,7 @@ function schemeForm(sc, kind0){
         const sel = el.querySelector('[data-k=item]');
         sel.onchange = () => { const it = itemById(sel.value); if(it){ const nm = el.querySelector('[data-k=name]'); nm.value = it.name.replace(/\s*\d+\s*мл\b.*$/i, '').trim() || it.name;
           if(it.route) el.querySelector('[data-k=route]').value = it.route; if(it.days) el.querySelector('[data-k=days]').value = it.days; if(it.dose && !el.querySelector('[data-k=dose]').value) el.querySelector('[data-k=dose]').value = it.dose; }
-          el.querySelector('[data-k=info]').textContent = vetItemInfo(it); sync(); };
+          el.querySelector('[data-k=gov]').hidden = !!sel.value; el.querySelector('[data-k=info]').textContent = vetItemInfo(it); sync(); };
       });
       box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { const cur = read(); cur.splice(+b.dataset.rm, 1); box.innerHTML = cur.map(stepRow).join(''); bindRows(); sync(); });
     };
@@ -1670,7 +1707,7 @@ function schemeForm(sc, kind0){
       ev.preventDefault();
       const err = s.querySelector('#scerr'), name = s.querySelector('#sc-name').value.trim(), steps = read().filter(x => x.name || x.item).map(x => ({...x, name: x.name || itemById(x.item)?.name || ''}));
       if(!name){ err.hidden = false; err.textContent = 'Укажите название схемы.'; return; }
-      if(!steps.length){ err.hidden = false; err.textContent = 'Добавьте хотя бы один препарат.'; return; }
+      if(!steps.length){ err.hidden = false; err.textContent = 'Добавьте хотя бы один препарат или процедуру (достаточно названия).'; return; }
       const kind = s.querySelector('#sc-kind').value, ron = s.querySelector('#sc-ron').checked;
       if(kind !== 'ill' && ron && !(parseInt(s.querySelector('#sc-repeat').value) > 0)){ err.hidden = false; err.textContent = 'Укажите, через сколько дней ' + (REP_T[kind] || 'повтор').toLowerCase() + '.'; return; }
       const data = {id: v.id || 's' + Date.now().toString(36), kind, name, steps, note:s.querySelector('#sc-note').value.trim(),
@@ -2020,7 +2057,7 @@ function routineForm(r){
     <div class="two" id="rt-ym">${fld('rt-month', 'Месяц', `<select id="rt-month">${MONTHS.map((m, i) => opt(String(i + 1), m, String(v.month))).join('')}</select>`)}${fld('rt-day', 'Число', `<input id="rt-day" type="number" min="1" max="31" inputmode="numeric" value="${esc(v.day)}">`)}</div>
     <div class="two" id="rt-ev">${fld('rt-every', 'Каждые', `<input id="rt-every" type="number" min="1" inputmode="numeric" value="${esc(v.every)}">`)}${fld('rt-start', 'Начиная с', `<input id="rt-start" type="date" value="${esc(v.start)}">`)}</div>
     <div class="two">${fld('rt-remind', 'Напомнить за, дней', `<input id="rt-remind" type="number" min="0" inputmode="numeric" value="${esc(v.remind)}">`)}
-      ${fld('rt-et', 'Записать как', `<select id="rt-et">${opt('', '—', v.etype || '')}${['ill', 'vac', 'treat', 'vit'].map(k => opt(k, ET[k].t, v.etype)).join('')}</select>`)}</div>
+      ${fld('rt-et', 'Записать как', `<select id="rt-et">${opt('', '—', v.etype || '')}${['ill', 'vac', 'treat', 'vit', 'diag'].map(k => opt(k, ET[k].t, v.etype)).join('')}</select>`)}</div>
     ${fld('rt-note', 'Пояснение', `<textarea id="rt-note">${esc(v.note)}</textarea>`)}
     <p class="muted" id="rt-sum" style="margin:0"></p>
     <p class="err" id="rterr" hidden></p>
@@ -2332,7 +2369,7 @@ function animalForm(a, pre){
 /* ----- Форма события (в т.ч. окот с ягнятами) ----- */
 // Выбор события для одного животного (из карточки)
 function evChoices(a){
-  const order = [['birth', 'Окот'], ['ill', 'Лечение'], ['vac', 'Вакцинация'], ['treat', 'Дегельминтизация'], ['vit', 'Витаминизация'], ['manip', 'Манипуляция'], ['weight', 'Взвешивание'], ['mating', 'Поставили на осеменение'], ['other', 'Другое']];
+  const order = [['birth', 'Окот'], ['ill', 'Лечение'], ['vac', 'Вакцинация'], ['treat', 'Дегельминтизация'], ['vit', 'Витаминизация'], ['diag', 'Исследование'], ['manip', 'Манипуляция'], ['weight', 'Взвешивание'], ['mating', 'Поставили на осеменение'], ['other', 'Другое']];
   return order.filter(([k]) => canCreate(evDomain(k)) && !((k === 'birth' || k === 'mating') && a.sex !== 'f'));
 }
 function evPick(id){
@@ -2880,7 +2917,7 @@ function vetJournalSheet(){
   }, 'vetjr');
 }
 function vetJournalXl(from, to){
-  const T = {ill:'Лечение', vac:'Вакцинация', treat:'Дегельминтизация', vit:'Витаминизация', manip:'Манипуляция', shear:'Стрижка'};
+  const T = {ill:'Лечение', vac:'Вакцинация', treat:'Дегельминтизация', vit:'Витаминизация', diag:'Исследование', manip:'Манипуляция', shear:'Стрижка'};
   const evs = S.events.filter(e => (T[e.type] || e.type === 'dose') && e.date >= from && e.date <= to).sort((a, b) => a.date.localeCompare(b.date) || (a.created || 0) - (b.created || 0));
   const parentOf = e => e.type === 'dose' ? S.events.find(x => x.id === e.course) : null;
   const drugOf = e => {
@@ -2894,7 +2931,7 @@ function vetJournalXl(from, to){
     const kind = e.type === 'dose' ? `${T[par?.type] || 'Курс'} · ${e.day || ''}-й день` : e.type === 'manip' ? (MANIP[e.manip] || 'Манипуляция') : T[e.type] + (e.scheme ? ' · назначено' : '');
     const sch = (e.type === 'dose' ? par?.scheme?.name : e.scheme?.name) || '';
     (ds.length ? ds : [{}]).forEach((d, i) => { const nm = d.name || itemById(d.item)?.name || '', it = d.item ? itemById(d.item) : S.items.find(x => x.cat === 'vet' && nm && norm(nm).startsWith(norm(x.name)));
-      rows.push([e.date, i ? '' : kind, i ? '' : sch, i ? '' : tags.length, i ? '' : tags.join(', '), nm, it?.series || '', it?.expiry || '', d.dose || '', d.route || '', i ? '' : (e.note || ''), i ? '' : by]); }); });
+      rows.push([e.date, i ? '' : kind, i ? '' : sch, i ? '' : tags.length, i ? '' : tags.join(', '), nm, d.series || it?.series || '', d.expiry || it?.expiry || '', d.dose || '', d.route || '', i ? '' : (e.note || ''), i ? '' : by]); }); });
   const sh = {name:'Журнал обработок', title:`Журнал ветеринарных обработок с ${fmtD(from)} по ${fmtD(to)}`, cols:[{h:'Дата', w:12, t:'d'}, {h:'Обработка', w:22}, {h:'Схема', w:18}, {h:'Голов', w:7, t:'i'}, {h:'Номера животных', w:40}, {h:'Препарат', w:24}, {h:'Серия', w:12}, {h:'Годен до', w:12, t:'d'}, {h:'Доза', w:10}, {h:'Способ', w:10}, {h:'Примечание', w:26}, {h:'Внёс', w:14}], rows};
   saveFile(`Журнал ветобработок ${from}_${to}.xlsx`, XL.build([sh])).then(ok => ok && toast(`Журнал: ${evs.length} ${plural(evs.length, 'запись', 'записи', 'записей')} — сохранено`));
 }
@@ -2961,7 +2998,8 @@ const MANUAL = [
   <p><b>Создать схему:</b> «Схемы» → «+ Новая схема» → тип (лечение, вакцинация, дегельминтизация, витаминизация), название (например «1 Понос молодняк») → препараты: из аптеки, доза, как вводить (в/м, п/к…), с какого дня и сколько дней → для лечения — на какой день оценить результат → «Сохранить».</p>
   <p><b>Ревакцинация / повторная обработка:</b> в схеме вакцинации поставьте галочку «Нужна ревакцинация», укажите «Через сколько дней» (например 21) и «Сколько раз». Тем же животным в нужный день сама придёт «Ревакцинация» в «События» и на главную — нажмите «Сделать», откроется запись уже с этими животными. Для дегельминтизации и витаминизации — так же.</p>
   <p><b>Назначить курс:</b> кнопка «Лечение» (или «Вакцинация»…) → выберите схему → отметьте животных → «Записать». Каждый день во вкладке «Сегодня» будет список процедур — нажмите «Сделано». В день оценки отметьте результат по каждому: здорово / повторить / другая схема / пало.</p>
-  <p><b>Аптека</b> (препараты, серии, сроки годности) — «Склад → Аптека».</p>`],
+  <p><b>Аптека</b> (препараты, серии, сроки годности) — «Склад → Аптека».</p>
+  <p><b>Государственные вакцины и исследования</b> (сибирская язва, туберкулинизация, кровь на бруцеллёз): в схеме в поле «Откуда препарат» оставьте «Не из аптеки (государственный / процедура)» и просто впишите название — со склада ничего не списывается. Можно указать серию и срок годности — они попадут в журнал для ветслужбы. Для ТБЦ и взятия крови выберите вид «Исследование (кровь, туберкулинизация)», событие — кнопка «Исследование». Повтор (например, через 180 дней) придёт сам, если отметить «Нужно повторное исследование».</p>`],
  ['agenda', 'События, календарь, годовой план', `
   <p><b>«События»</b> — всё, что нужно сделать: сегодня, неделя, месяц. Фильтры: ветеринария, окоты, склад, план. Просроченное — сверху. Ожидаемые окоты, ревакцинации, процедуры курсов, заканчивающиеся корма и препараты появляются сами.</p>
   <p><b>Годовой план и напоминания</b> («Ещё»): регулярные дела — пробы молока в лабораторию, контрольная дойка, обрезка копыт, обработки, стрижка, подготовка к случке и т. д. «Загрузить базовый план» — типовой список; «+ Добавить дело» — своё: что, когда (раз в год / месяц / неделю), за сколько дней напомнить. Отметка «Сделано» — в «Событиях». «В календарь телефона» — напоминания в календарь телефона.</p>`],
